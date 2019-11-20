@@ -1,0 +1,1869 @@
+---
+title: "alirpheno_11.19"
+author: "GK"
+date: "11/19/2019"
+output: html_document
+---
+###### Host-Response Subphenotypes Offer Prognostic Enrichment in Patients With or at Risk for Acute Respiratory Distress Syndrome
+# Kitsios, Georgios D. MD, PhD1,2; Yang, Libing MDc1; Manatakis, Dimitris V. PhD3; Nouraie, Mehdi MD, PhD1; Evankovich, John MD1; Bain, William MD1; Dunlap, Daniel G. # MD1; Shah, Faraaz MD, MPH1; Barbash, Ian J. MD, MS1; Rapport, Sarah F. BS, MPH1; Zhang, Yingze PhD1; DeSensi, Rebecca S. BA1; Weathington, Nathaniel M. MD, PhD1; 
+# Chen, Bill B. PhD1; Ray, Prabir PhD1; Mallampalli, Rama K. MD1,4; Benos, Panayiotis V. PhD3; Lee, Janet S. MD1; Morris, Alison MD, MS1,2,5; McVerry, Bryan J. MD1,2
+
+# Critical Care Medicine: December 2019 - Volume 47 - Issue 12 - p 1724-1734
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# load important libraries
+library(dplyr)
+library(readxl)
+library(plyr)
+library(ggplot2)
+library(psych)
+library(lubridate)
+library(stargazer)
+library(reshape2)
+library(ggbeeswarm)
+library(epitools)
+library(vegan)
+library(tidyr)
+library(gdata)
+library(stringr)
+library(ggpubr)
+library(mice)
+library(networkD3)
+library(data.table)
+library(readr)
+library("Partiallyoverlapping")
+library("ggsignif")
+library("permute")
+library("haven")
+library(ggcorrplot)
+library(tableone)
+library(waffle)
+library(irr)
+library(epiDisplay)
+library(nlme)
+library(rel)
+library(pwr)
+
+### packages for survival analysis
+library("survival")
+library("survminer")
+library(cr17)
+
+```
+
+```{r}
+#### import the clean sampleid baseline file to be named: alirpheno_basl
+alirpheno_basl_github <- read.csv("~/Desktop/Microbiome/ICU ARDS mbiome/projects/ARDSpheno18/LCA_analyses/alirpheno_basl_github.csv")
+alirpheno_basl <- alirpheno_basl_github
+```
+
+```{r}
+### Selection of variables for LCA analyses based on review of prior work by Calfee et al. 
+
+# Calfee et al. 2014 from supplemental table: il6, il8, tnfr1, pai1, HR, minvent, map, icam1, plateau, vwf, Creatinine, RR, totalbilirubin, PEEP, Temp, Hct, WBC, Sodium, Age, Urine output, SPD, TidalVolume BNI, Glucose, P/F, Albumin, Platelets, PaCO2, SBP, ProtC, Bicarbonate. Gender, Race, Vasopressors, Etiology of ARDS (trauma, sepsis, aspiration, pneumonia)
+
+# Famous et al. 2017: il6, il8, tnfr1, Ang2,  pai1, RAGE,  HR, Mean Airway pressure, RR, minvent, map, icam1, plateau, vwf, Creatinine, RR, totalbilirubin, PEEP, Temp, Hct, WBC, Sodium, Age, Urine, SPD, TidalVolume BNI, Glucose, P/F, Albumin, Platelets, PaCO2, SBP, ProtC, Bicarbonate.
+
+ls(alirpheno_basl)
+# from this list seelct variables that match the selection of prior variables and also include additional ones available only in our cohort. 
+alirpheno_sampleid_basl_LCA <- subset(alirpheno_basl, select = c(  SubjectID, group, Age,  ang2,   bacteremia  , BMI,  CO2, Creatinine, directinjury,  fractalkine, Gender, Glucose, HGB, HistAlcohol, HistCOPD, HistDiabetes, HistHypoalbuminemia,HistImmunosuppression, HistPulmonaryFibrosis, HR, il10,  il6, il8, PaCO2, PEEP,pentraxin3,  PHa, PlateauPressure,Platelets, procalcitonin,  rage, respcxpos, SBP, SOFAScore, st2, Temperature , tnfr1, TotalRR, TVmlperkg, WBC, WorstPaO2FiO2Ratio))
+
+# no missingness in this dataset
+names(which(sapply(alirpheno_sampleid_basl_LCA, anyNA)))
+
+#### look at correlogram in this dataset
+# http://www.sthda.com/english/wiki/ggcorrplot-visualization-of-a-correlation-matrix-using-ggplot2
+# take continuous variables from LCA dataframe
+
+alirpheno_sampleid_basl_LCA_continuous <- subset(alirpheno_sampleid_basl_LCA, select = c(  Age,  ang2, BMI,  CO2, Creatinine,   fractalkine, Glucose, HGB,  HR, il10,  il6, il8, PaCO2, PEEP,pentraxin3,  PHa, PlateauPressure,Platelets, procalcitonin,  rage,  SBP, SOFAScore, st2, Temperature , tnfr1, TotalRR, TVmlperkg, WBC, WorstPaO2FiO2Ratio))
+
+corr <- round(cor(alirpheno_sampleid_basl_LCA_continuous), 1)
+# Compute a matrix of correlation p-values
+p.mat <- cor_pmat(alirpheno_sampleid_basl_LCA_continuous)
+# Visualize the correlation matrix
+# --------------------------------
+# method = "square" (default)
+ggcorrplot(corr, method = "circle",type = "lower",  p.mat = p.mat)
+
+#### breakdown to 3 baseline datasets for ards, atrisk and notatrisk
+alirpheno_sampleid_basl_LCA_ards <- filter(alirpheno_sampleid_basl_LCA, group=="ards")
+alirpheno_sampleid_basl_LCA_atrisk <- filter(alirpheno_sampleid_basl_LCA, group=="atrisk")
+alirpheno_sampleid_basl_LCA_notatrisk <- filter(alirpheno_sampleid_basl_LCA, group=="notatrisk")
+```
+
+
+```{r}
+### to adress reviewer's comment on baseline interval being too wide, examine the 0-1, 1-2. 
+# define new variable baselineday
+alirpheno_basl <- mutate(alirpheno_basl, baselineday = ifelse(alirpheno_basl$timesamplefromintubation=="0", "one", NA))
+alirpheno_basl <- mutate(alirpheno_basl, baselineday = ifelse(alirpheno_basl$timesamplefromintubation=="1" | alirpheno_basl$timesamplefromintubation=="2", "two", alirpheno_basl$baselineday))
+alirpheno_basl$baselineday <-as.factor(alirpheno_basl$baselineday)
+
+alirpheno_basl %>% filter(group=="ards") %>% group_by(baselineday) %>% tally()
+alirpheno_basl %>% filter(group=="atrisk") %>% group_by(baselineday) %>% tally()
+alirpheno_basl %>% filter(group=="notatrisk") %>% group_by(baselineday) %>% tally()
+
+alirpheno_basl %>% filter(group=="ards") %>% filter(!is.na(baselineday)) %>% ggplot(aes(x=baselineday, y = log(tnfr1))) + geom_point() + geom_boxplot() +
+stat_compare_means(aes(group = baselineday), label = "p.signif", method = "wilcox.test", color =  c("red"), face = "bold",label.x = c(1.5), size = 8)
+alirpheno_basl %>% filter(group=="ards") %>% filter(!is.na(baselineday)) %>% ggplot(aes(x=baselineday, y = log(il8))) + geom_point() + geom_boxplot()+
+stat_compare_means(aes(group = baselineday), label = "p.signif", method = "wilcox.test", color =  c("red"), face = "bold",label.x = c(1.5), size = 8)
+alirpheno_basl %>% filter(group=="ards") %>% filter(!is.na(baselineday)) %>% ggplot(aes(x=baselineday, y = log(CO2))) + geom_point() + geom_boxplot()+
+stat_compare_means(aes(group = baselineday), label = "p.signif", method = "wilcox.test", color =  c("red"), face = "bold",label.x = c(1.5), size = 8)
+
+
+### create a long dataset to visualize these comparisons faceted by group and variable
+alirpheno_basl_visualize_basl <- subset(alirpheno_basl, select = c(SubjectID, baselineday, group, tnfr1, CO2, il8))
+alirpheno_basl_visualize_basl_long <- gather(alirpheno_basl_visualize_basl, variable, measurement, tnfr1:il8, factor_key = TRUE)
+alirpheno_basl_visualize_basl_long <- filter(alirpheno_basl_visualize_basl_long, !is.na(baselineday)) 
+ggplot(alirpheno_basl_visualize_basl_long, aes(x=baselineday, y = log(measurement))) + geom_boxplot() + geom_point() +
+  facet_grid(group ~ variable, scales = "free")
+ 
+# improve the esthetics of this figure for publication purposes
+groupnamesforards <- c('ards'="ARDS", 'atrisk'="ARFA", 'notatrisk'  = "Controls", "tnfr1" = "TNFR1", "CO2" = "CO2", "il8" = "IL-8")
+
+jpeg('alirpheno_basl_visualize_basl_long.jpeg', units="in", width=6, height=4, res=700)
+ggplot(alirpheno_basl_visualize_basl_long, aes(x=baselineday, y = log(measurement))) + geom_boxplot() +  geom_jitter(width=0.1, size =0.4) +
+  facet_grid(group ~ variable, labeller = as_labeller(groupnamesforards)) +
+    theme(axis.text.x = element_text(size=12), axis.text.y = element_text(size=8), axis.title.x = element_text(colour="black", size = 18, face = "bold"), axis.title.y = element_text(size=14, face = "bold"), strip.text.x = element_text(size=12, colour = "black", face = "bold"), strip.text.y = element_text(size=12, colour = "blue", face = "bold")) + 
+  ylab("Log concentration") + xlab("Day post-intubation") + 
+  stat_compare_means(aes(group = baselineday), label = "p.signif", method = "wilcox.test", color =  c("red"), face = "bold",label.x = c(1.5), size = 4)
+dev.off()
+
+
+```
+
+
+```{r}
+######## Table 1 characteristics ######## 
+######## use the tableone package for automation of this process. 
+# to obtain p-value comparisons between ards-arfa and between ards-controls, will have to break down the df to 2 smaller ones. 
+
+tbl_df(alirpheno_basl)
+
+ # break in two datasets
+alirpheno_basl_ardsarfa <- filter(alirpheno_basl, group !="notatrisk")
+alirpheno_basl_ardscontr <- filter(alirpheno_basl, group !="atrisk")
+
+
+# define group levels in both dfs to allow for comparisons
+alirpheno_basl_ardsarfa$group <-as.character(alirpheno_basl_ardsarfa$group)
+alirpheno_basl_ardsarfa$group <-as.factor(alirpheno_basl_ardsarfa$group)
+alirpheno_basl_ardscontr$group <-as.character(alirpheno_basl_ardscontr$group)
+alirpheno_basl_ardscontr$group <-as.factor(alirpheno_basl_ardscontr$group)
+
+vars_continuous <- c("Age","BMI","lips_score", "SOFAScore","WorstPaO2FiO2Ratio","HR", "SBP", "LowestMAP", "PHa", "WBC", "Platelets", "Creatinine", "CO2", "TotalRR", "PEEP", "PeakInspiratory","PlateauPressure",  "TVmlperkg","SaturationSpO2", "intubationduration", "ICUstayduration","VFD", "il6","il8","il10","tnfr1","ang2","pentraxin3","fractalkine","st2","procalcitonin","rage")
+vars_categorical <- c("Gender","HistDiabetes","HistCOPD", "HistImmunosuppression", "HistCRF","HistCCF", "HistAlcohol" ,  "HistPulmonaryFibrosis", "Pneumonia", "Aspiration", "sepsis_nonpum", "VasopressorFirstWeek", "AKIFirstWeek",
+                     "Mortality30Day","Mortality90Day")
+
+#separate tables for categorical and continous variables; had some errors when tried combining both into one table
+
+cat_table_ardsarfa <- print(CreateCatTable(vars = vars_categorical, strata = "group",data=alirpheno_basl_ardsarfa, test = TRUE, testExact = fisher.test, includeNA = FALSE), pDigits = 2)
+con_table_ardsarfa <- print(CreateContTable(vars = vars_continuous, strata = "group",data=alirpheno_basl_ardsarfa), nonnormal = vars_continuous, digits  = 1, pDigits = 2)
+
+
+# ards vs controls
+cat_table_ardscontr <- print(CreateCatTable(vars = vars_categorical, strata = "group",data=alirpheno_basl_ardscontr, test = TRUE, testExact = fisher.test, includeNA = FALSE), pDigits = 2)
+con_table_ardscontr <- print(CreateContTable(vars = vars_continuous, strata = "group",data=alirpheno_basl_ardscontr), nonnormal = vars_continuous, digits  = 1, pDigits = 2)
+
+```
+
+
+```{r}
+####### create tables for each group comparing subphenotypes or classes. 
+# break datasets in 3
+alirpheno_basl_ards <- filter(alirpheno_basl, group=="ards")
+alirpheno_basl_arfa <- filter(alirpheno_basl, group=="atrisk")
+alirpheno_basl_contr <- filter(alirpheno_basl, group=="notatrisk")
+
+# use the same vars_continuous and vars_categorical as above. 
+# ards by class
+cat_table_ards_class <- print(CreateCatTable(vars = vars_categorical, strata = "class",data=alirpheno_basl_ards, test = TRUE, testExact = fisher.test, includeNA = FALSE), pDigits = 2)
+con_table_ards_class <- print(CreateContTable(vars = vars_continuous, strata = "class",data=alirpheno_basl_ards), nonnormal = vars_continuous, digits  = 1, pDigits = 2)
+
+# ardsbypheno
+cat_table_ards_pheno <- print(CreateCatTable(vars = vars_categorical, strata = "ardsphenotype",data=alirpheno_basl_ards, test = TRUE, testExact = fisher.test, includeNA = FALSE), pDigits = 2)
+con_table_ards_pheno <- print(CreateContTable(vars = vars_continuous, strata = "ardsphenotype",data=alirpheno_basl_ards), nonnormal = vars_continuous, digits  = 1, pDigits = 2)
+
+#arfabyclass
+cat_table_arfa_class <- print(CreateCatTable(vars = vars_categorical, strata = "class",data=alirpheno_basl_arfa, test = TRUE, testExact = fisher.test, includeNA = FALSE), pDigits = 2)
+con_table_arfa_class <- print(CreateContTable(vars = vars_continuous, strata = "class",data=alirpheno_basl_arfa), nonnormal = vars_continuous, digits  = 1, pDigits = 2)
+
+#arfabypheno
+cat_table_arfa_pheno <- print(CreateCatTable(vars = vars_categorical, strata = "ardsphenotype",data=alirpheno_basl_arfa, test = TRUE, testExact = fisher.test, includeNA = FALSE), pDigits = 2)
+con_table_arfa_pheno <- print(CreateContTable(vars = vars_continuous, strata = "ardsphenotype",data=alirpheno_basl_arfa), nonnormal = vars_continuous, digits  = 1, pDigits = 2)
+
+#controlsbyclass
+cat_table_contr_class <- print(CreateCatTable(vars = vars_categorical, strata = "class",data=alirpheno_basl_contr, test = TRUE, testExact = fisher.test, includeNA = FALSE), pDigits = 2)
+con_table_contr_class <- print(CreateContTable(vars = vars_continuous, strata = "class",data=alirpheno_basl_contr), nonnormal = vars_continuous, digits  = 1, pDigits = 2)
+
+#controlsbypheno
+cat_table_contr_pheno <- print(CreateCatTable(vars = vars_categorical, strata = "ardsphenotype",data=alirpheno_basl_contr, test = TRUE, testExact = fisher.test, includeNA = FALSE), pDigits = 2)
+con_table_contr_pheno <- print(CreateContTable(vars = vars_continuous, strata = "ardsphenotype",data=alirpheno_basl_contr), nonnormal = vars_continuous, digits  = 1, pDigits = 2)
+
+
+
+```
+
+
+```{r}
+##### Examine for agreement between derived classes and predicted subphenotypes. 
+# http://www.cookbook-r.com/Statistical_analysis/Inter-rater_reliability/
+##### Nomenclature: class = LCA, subphenotype = predicted model. 
+# given distribution of differences, will also call hyperinflammatory class 
+
+
+# look for concordance and calculate kappa statistics by group. 
+# ards
+table(alirpheno_basl_ards$class, alirpheno_basl_ards$ardsphenotype)
+# create ordinal variable
+alirpheno_basl_ards <-mutate(alirpheno_basl_ards, ardsphenotypeordinal = ifelse(ardsphenotype=="phen1", 1, 2))
+table(alirpheno_basl_ards$class, alirpheno_basl_ards$ardsphenotypeordinal)
+# calculate kappa statistic. 
+kappa2(alirpheno_basl_ards[, c("class", "ardsphenotypeordinal")])
+# Kappa = 0.724 
+
+# arfa
+table(alirpheno_basl_arfa$class, alirpheno_basl_arfa$ardsphenotype)
+# create ordinal variable
+alirpheno_basl_arfa <-mutate(alirpheno_basl_arfa, ardsphenotypeordinal = ifelse(ardsphenotype=="phen1", 1, 2))
+table(alirpheno_basl_arfa$class, alirpheno_basl_arfa$ardsphenotypeordinal)
+# calculate kappa statistic. 
+kappa2(alirpheno_basl_arfa[, c("class", "ardsphenotypeordinal")])
+# kappa = 0.72
+
+#controls
+table(alirpheno_basl_contr$class, alirpheno_basl_contr$ardsphenotype)
+# create ordinal variable
+alirpheno_basl_contr <-mutate(alirpheno_basl_contr, ardsphenotypeordinal = ifelse(ardsphenotype=="phen1", 1, 2))
+table(alirpheno_basl_contr$class, alirpheno_basl_contr$ardsphenotypeordinal)
+# calculate kappa statistic. 
+kappa2(alirpheno_basl_contr[, c("class", "ardsphenotypeordinal")])
+# kappa = 0.481
+
+### Visually describe the agreement between methods with waffle graphs
+
+ards_class_phenos <- c(54, 11, 3, 36)
+waffle(ards_class_phenos, colors = c("mediumblue", "lightblue", "red", "red4"), legend_pos = "none")
+
+
+#publishabel figure ards
+iron(waffle(c(class1 = 54, phen1 = 11),rows = 7, colors =c("mediumblue", "lightblue"), legend_pos = "none"), waffle(c(phen2=36, class2=3), rows = 4, colors = c("red4", "red"), legend_pos = "none"))
+
+ards_class_phenos_matrix <- subset(alirpheno_basl_ards, select = c(class, ardsphenotype))
+# replace phen2/phen1 with numbers
+ards_class_phenos_matrix$ardsphenotype <- as.character(ards_class_phenos_matrix$ardsphenotype)
+ards_class_phenos_matrix$ardsphenotype[ards_class_phenos_matrix$ardsphenotype=="phen2"] <- "2"
+ards_class_phenos_matrix$ardsphenotype[ards_class_phenos_matrix$ardsphenotype=="phen1"] <- "1"
+
+gac(data = ards_class_phenos_matrix, kat = 4)
+ckap(data = ards_class_phenos_matrix)
+
+#arfa 
+arfa_class_phenos <- c(68, 10, 3, 27)
+iron(waffle(c(class1 = 68, phen1 = 10),rows = 8, colors =c("mediumblue", "lightblue"), legend_pos = "none"), waffle(c(phen2=27, class2=3), rows = 3, colors = c("red4", "red"), legend_pos = "none"))
+waffle(arfa_class_phenos, colors = c("mediumblue", "lightblue", "red", "red4"), legend_pos = "none")
+
+arfa_class_phenos_matrix <- subset(alirpheno_basl_arfa, select = c(class, ardsphenotype))
+
+arfa_class_phenos_matrix$ardsphenotype <- as.character(arfa_class_phenos_matrix$ardsphenotype)
+arfa_class_phenos_matrix$ardsphenotype[arfa_class_phenos_matrix$ardsphenotype=="phen2"] <- "2"
+arfa_class_phenos_matrix$ardsphenotype[arfa_class_phenos_matrix$ardsphenotype=="phen1"] <- "1"
+gac(data = arfa_class_phenos_matrix, kat = 4)
+ckap(data = arfa_class_phenos_matrix)
+
+#controls
+contr_class_phenos <- c(45, 5, 4, 6)
+waffle(contr_class_phenos, rows = 6, colors = c("mediumblue", "lightblue", "red", "red4"), legend_pos = "none")
+iron(waffle(c(class1 = 45, phen1 = 5),rows = 10, colors =c("mediumblue", "lightblue"), legend_pos = "none"), waffle(c(phen2=4, class2=6), rows = 2, colors = c("red4", "red"), legend_pos = "none"))
+contr_class_phenos_matrix <-subset(alirpheno_basl_contr, select = c(class, ardsphenotype))
+contr_class_phenos_matrix$ardsphenotype <- as.character(contr_class_phenos_matrix$ardsphenotype)
+contr_class_phenos_matrix$ardsphenotype[contr_class_phenos_matrix$ardsphenotype=="phen2"] <- "2"
+contr_class_phenos_matrix$ardsphenotype[contr_class_phenos_matrix$ardsphenotype=="phen1"] <- "1"
+gac(data = contr_class_phenos_matrix, kat = 4)
+ckap(data = contr_class_phenos_matrix)
+
+gac(data = contr_class_phenos_matrix, kat = 4)
+
+
+#### use the package PresenceAbsence to calculate AUC
+# https://www.researchgate.net/post/How_to_Calculate_AUC_using_R_commands_for_validating_prediction_power_of_species_distribution_models
+library(PresenceAbsence)
+# define subsets of df with the necessary variables. 
+ards_auc <- subset(alirpheno_basl_ards, select = c(SubjectID, class, prob))
+ards_auc <- mutate(ards_auc, classmutate = ifelse(ards_auc$class=="1", "1", "0"))
+ards_auc$classmutate <-as.numeric(ards_auc$classmutate)
+ards_auc <- ards_auc[, -2]
+
+colnames(ards_auc)[colnames(ards_auc)=="SubjectID"] <-"ID"
+colnames(ards_auc)[colnames(ards_auc)=="classmutate"] <-"Observed"
+colnames(ards_auc)[colnames(ards_auc)=="prob"] <-"Predicted"
+
+# reorder columns
+ards_auc <-ards_auc[c(1, 3, 2)]
+auc(ards_auc) ### 0.93 , sd = 0.02
+
+####### repeat in arfa group
+arfa_auc <- subset(alirpheno_basl_arfa, select = c(SubjectID, class, prob))
+arfa_auc <- mutate(arfa_auc, classmutate = ifelse(arfa_auc$class=="1", "1", "0"))
+arfa_auc$classmutate <-as.numeric(arfa_auc$classmutate)
+arfa_auc <- arfa_auc[, -2]
+
+colnames(arfa_auc)[colnames(arfa_auc)=="SubjectID"] <-"ID"
+colnames(arfa_auc)[colnames(arfa_auc)=="classmutate"] <-"Observed"
+colnames(arfa_auc)[colnames(arfa_auc)=="prob"] <-"Predicted"
+
+# reorder columns
+arfa_auc <-arfa_auc[c(1, 3, 2)]
+auc(arfa_auc) ### 0.97 , sd = 0.01
+
+```
+
+
+
+```{r}
+############ 
+########### look for association with mortality in logistic regression models
+# ards - class
+mort30ardslogit <- glm(Mortality30Day ~ Age + WorstPaO2FiO2Ratio + SOFAScore  + class, data = alirpheno_basl_ards, family = binomial(link = "logit"))
+logistic.display(mort30ardslogit)
+# ards - phenotype
+mort30ardslogit_pheno <- glm(Mortality30Day ~ Age + WorstPaO2FiO2Ratio + SOFAScore + class, data = alirpheno_basl_ards, family = binomial(link = "logit"))
+logistic.display(mort30ardslogit_pheno)
+
+#arfa - class
+mort30arfalogit <- glm(Mortality30Day ~ Age + WorstPaO2FiO2Ratio + SOFAScore + class, data = alirpheno_basl_arfa, family = binomial(link = "logit"))
+logistic.display(mort30arfalogit)
+# arfa - pheno
+mort30arfalogit_pheno <- glm(Mortality30Day ~ Age + WorstPaO2FiO2Ratio + SOFAScore + ardsphenotype, data = alirpheno_basl_arfa, family = binomial(link = "logit"))
+logistic.display(mort30arfalogit_pheno)
+
+# control - class
+mort30contrlogit <- glm(Mortality30Day ~ Age + WorstPaO2FiO2Ratio + SOFAScore + class, data = alirpheno_basl_contr, family = binomial(link = "logit"))
+logistic.display(mort30contrlogit)
+# contr - pheno
+mort30contrlogit_pheno <- glm(Mortality30Day ~ Age + WorstPaO2FiO2Ratio + SOFAScore + ardsphenotype, data = alirpheno_basl_contr, family = binomial(link = "logit"))
+logistic.display(mort30contrlogit_pheno)
+
+
+####### 90 day mortality
+# ards - class
+mort90ardslogit <- glm(Mortality90Day ~ Age + WorstPaO2FiO2Ratio + SOFAScore + class, data = alirpheno_basl_ards, family = binomial(link = "logit"))
+logistic.display(mort90ardslogit)
+# ards - phenotype
+mort90ardslogit_pheno <- glm(Mortality90Day ~ Age + WorstPaO2FiO2Ratio + SOFAScore + class, data = alirpheno_basl_ards, family = binomial(link = "logit"))
+logistic.display(mort90ardslogit_pheno)
+
+#arfa - class
+mort90arfalogit <- glm(Mortality90Day ~ Age + WorstPaO2FiO2Ratio + SOFAScore + class, data = alirpheno_basl_arfa, family = binomial(link = "logit"))
+logistic.display(mort90arfalogit)
+# arfa - pheno
+mort90arfalogit_pheno <- glm(Mortality90Day ~ Age + WorstPaO2FiO2Ratio + SOFAScore + ardsphenotype, data = alirpheno_basl_arfa, family = binomial(link = "logit"))
+logistic.display(mort90arfalogit_pheno)
+
+# control - class
+mort90contrlogit <- glm(Mortality90Day ~ Age + WorstPaO2FiO2Ratio + SOFAScore + class, data = alirpheno_basl_contr, family = binomial(link = "logit"))
+logistic.display(mort90contrlogit)
+# contr - pheno
+mort90contrlogit_pheno <- glm(Mortality90Day ~ Age + WorstPaO2FiO2Ratio + SOFAScore + ardsphenotype, data = alirpheno_basl_contr, family = binomial(link = "logit"))
+logistic.display(mort90contrlogit_pheno)
+
+```
+
+
+```{r}
+
+##### time to event analyses for mortality data
+# tutorials
+# https://bioconnector.org/r-survival.html
+# https://www.youtube.com/watch?v=3iPVDg4F37k&t=36s
+
+# df to be used here is alirpheno_basl for each group. 
+# select 3 groups and baseline subjects
+####################### 
+survival_rate <- alirpheno_basl
+# add new varialbe : survival_time (survival time in days)
+# for patients who didn't die during follow-up, survival time will be NA
+# from hospital admission date to date of death
+survival_rate$DOD <-  mdy(survival_rate$DOD)
+survival_rate$ICUAdmissionDate <-  mdy(survival_rate$ICUAdmissionDate)
+survival_rate$HospitalAdmissionDate <-  mdy(survival_rate$HospitalAdmissionDate) 
+class(survival_rate$HospitalAdmissionDate)
+
+survival_rate$survival_time_fromHospiAdmission <- ymd(survival_rate$DOD) - ymd(survival_rate$HospitalAdmissionDate)
+survival_rate$survival_time_fromICUAdmission <-   ymd(survival_rate$DOD) - ymd(survival_rate$ICUAdmissionDate)                                                                                      
+# For patients who didn't die with 90 days (censored data), their survival time may be NA or >90, change their survival time to 91 for better plot
+survival_rate$survival_time90_fromICUAdmission <- survival_rate$survival_time_fromICUAdmission
+survival_rate$survival_time90_fromICUAdmission[survival_rate$survival_time_fromICUAdmission > 90] <- 91
+survival_rate$survival_time90_fromICUAdmission[is.na(survival_rate$survival_time_fromICUAdmission) == TRUE] <- 91
+# survival_status: censoring status 1=censored, 2=dead
+survival_rate <- mutate(survival_rate, survival_status90 = ifelse(survival_rate$survival_time90_fromICUAdmission > 90 , 1, 2))
+survival_rate$survival_status90
+# create a survival object
+survival_object90 <- Surv(survival_rate$survival_time90_fromICUAdmission, survival_rate$survival_status90)
+survival_object90
+# fit a survival curve
+# by ardsphenotype
+survival_fit_bygroup90 <- survfit(Surv(survival_time90_fromICUAdmission, survival_status90)~group, data=survival_rate)
+summary(survival_fit_bygroup90)
+# plot
+# example: 
+# ggsurvplot(sfit, conf.int=TRUE, pval=TRUE, risk.table=TRUE,  # show p-value for log-rank test
+#            legend.labs=c("Male", "Female"), legend.title="Sex",  
+#            palette=c("dodgerblue2", "orchid2"), 
+#            title="Kaplan-Meier Curve for Lung Cancer Survival", 
+#            risk.table.height=.15)
+
+ggsurvplot(survival_fit_bygroup90, pval=TRUE, title = "Kaplan-Meier Curve within 90 days")
+# fit a Cox PH model. 
+survival_coxph_bygroup90 <- coxph(Surv(survival_time90_fromICUAdmission, survival_status90)~group, data=survival_rate)
+summary(survival_coxph_bygroup90)
+# For patients who didn't die with 30 days(censored data), their survival time may be NA or >30, change their survival time to 31 for better plot
+survival_rate$survival_time30_fromICUAdmission <- survival_rate$survival_time_fromICUAdmission
+survival_rate$survival_time30_fromICUAdmission[survival_rate$survival_time_fromICUAdmission > 30] <- 31
+survival_rate$survival_time30_fromICUAdmission[is.na(survival_rate$survival_time_fromICUAdmission) == TRUE] <- 31
+
+survival_rate <- mutate(survival_rate, survival_status30 = ifelse(survival_rate$survival_time30_fromICUAdmission > 30 , 1, 2)) 
+survival_rate$survival_status30
+
+survival_object30 <- Surv(survival_rate$survival_time30_fromICUAdmission, survival_rate$survival_status30)
+survival_object30
+
+survival_fit_bygroup30 <- survfit(Surv(survival_time30_fromICUAdmission, survival_status30)~group, data=survival_rate)
+
+ggsurvplot(survival_fit_bygroup30, pval=TRUE, title = "Kaplan-Meier Curve within 30 days")
+
+survival_fit_bygroup30 <- survfit(Surv(survival_time30_fromICUAdmission, survival_status30)~group, data=survival_rate)
+ggsurvplot(survival_fit_bygroup30, pval=TRUE, title = "Kaplan-Meier Curve within 30 days")
+
+
+##### PERFORM SURVIVAL ANALYSIS BY CLASS AND PHENOTYPE FOR EACH GROUP SEPARETELY
+survival_rate_ards <- filter(survival_rate, group=="ards")
+
+# ARDS 90 days
+survival_object90_ards <- Surv(survival_rate_ards$survival_time90_fromICUAdmission, survival_rate_ards$survival_status90)
+survival_object90_ards
+survival_fit_bypheno_ards <- survfit(Surv(survival_time90_fromICUAdmission, survival_status90)~ardsphenotype, data=survival_rate_ards)
+
+jpeg('ards_90days_bypheno.jpeg', units="in", width=6.5,height=6, res=600)
+ggsurvplot(survival_fit_bypheno_ards, pval=TRUE, title = "90 day survival in ARDS patients", legend.labs=c("Hypoinflammatory", "Hyperinflammatory"), palette = c("blue", "red"), risk.table = FALSE, legend.title = "Subphenotypes:", font.legend = c(14, "bold", "black"), font.title = c(16, "bold", "black"))
+dev.off()
+
+survival_fit_byclass_ards <- survfit(Surv(survival_time90_fromICUAdmission, survival_status90)~class, data=survival_rate_ards)
+
+jpeg('ards_90days_byclass.jpeg', units="in", width=6.5,height=6, res=600)
+ggsurvplot(survival_fit_byclass_ards, pval=TRUE, title = "90 day survival in ARDS patients", legend.labs=c("Hypoinflammatory", "Hyperinflammatory"), palette = c("blue", "red"), risk.table = FALSE, legend.title = "Class:", font.legend = c(14, "bold", "black"), font.title = c(16, "bold", "black"))
+dev.off()
+##### fit cox ph models to adjust for known predictors of mortality and look for effect of phenotype in the ARDS population. 
+survival_coxph_90_ards <- coxph(Surv(survival_time90_fromICUAdmission, survival_status90)~Age +WorstPaO2FiO2Ratio + SOFAScore  + ardsphenotype, data=survival_rate_ards)
+summary(survival_coxph_90_ards)
+survival_coxph_90_ards <- coxph(Surv(survival_time90_fromICUAdmission, survival_status90)~Age +WorstPaO2FiO2Ratio + SOFAScore  + class, data=survival_rate_ards)
+summary(survival_coxph_90_ards)
+
+
+### ARDS 30 days
+survival_object30_ards <- Surv(survival_rate_ards$survival_time30_fromICUAdmission, survival_rate_ards$survival_status30)
+survival_object30_ards
+survival_fit_bypheno30_ards <- survfit(Surv(survival_time30_fromICUAdmission, survival_status30)~ardsphenotype, data=survival_rate_ards)
+survival_fit_byclass30_ards <- survfit(Surv(survival_time30_fromICUAdmission, survival_status30)~class, data=survival_rate_ards)
+
+jpeg('ards_30days_pheno.jpeg', units="in", width=6.5,height=5, res=600)
+ggsurvplot(survival_fit_bypheno30_ards, pval=TRUE, title = "30 day survival in ARDS patients", legend.labs=c("Hypoinflammatory", "Hyperinflammatory"), palette = c("blue", "red"), risk.table = FALSE, legend.title = "Subphenotypes:", font.legend = c(14, "bold", "black"), font.title = c(16, "bold", "black"))
+dev.off()
+
+jpeg('ards_30days_class.jpeg', units="in", width=6.5,height=5, res=600)
+ggsurvplot(survival_fit_byclass30_ards, pval=TRUE, title = "30 day survival in ARDS patients", legend.labs=c("Hypoinflammatory", "Hyperinflammatory"), palette = c("blue", "red"), risk.table = FALSE, legend.title = "Class:", font.legend = c(14, "bold", "black"), font.title = c(16, "bold", "black"))
+dev.off()
+
+# for prism no label
+jpeg('ards_30days_class_forprism.jpeg', units="in", width=6.5,height=5, res=600)
+ggsurvplot(survival_fit_byclass30_ards, pval=TRUE,  legend="none", palette = c("blue", "red"), risk.table = FALSE )
+dev.off()
+
+# cox model 30 days
+survival_coxph_30_ards <- coxph(Surv(survival_time30_fromICUAdmission, survival_status90)~Age +WorstPaO2FiO2Ratio + SOFAScore + ardsphenotype, data=survival_rate_ards)
+summary(survival_coxph_30_ards)
+survival_coxph_30_ards <- coxph(Surv(survival_time30_fromICUAdmission, survival_status90)~Age +WorstPaO2FiO2Ratio + SOFAScore + class, data=survival_rate_ards)
+summary(survival_coxph_30_ards)
+
+
+######## ARFA
+survival_rate_arfa <- filter(survival_rate, group=="atrisk")
+
+# arfa 90 days
+survival_object90_arfa <- Surv(survival_rate_arfa$survival_time90_fromICUAdmission, survival_rate_arfa$survival_status90)
+survival_object90_arfa
+survival_fit_bypheno_arfa <- survfit(Surv(survival_time90_fromICUAdmission, survival_status90)~ardsphenotype, data=survival_rate_arfa)
+
+jpeg('arfa_90days_bypheno.jpeg', units="in", width=6.5,height=6, res=600)
+ggsurvplot(survival_fit_bypheno_arfa, pval=TRUE, title = "90 day survival in ARFA patients", legend.labs=c("Hypoinflammatory", "Hyperinflammatory"), palette = c("blue", "red"), risk.table = FALSE, legend.title = "Subphenotypes:", font.legend = c(14, "bold", "black"), font.title = c(16, "bold", "black"))
+dev.off()
+
+survival_fit_byclass_arfa <- survfit(Surv(survival_time90_fromICUAdmission, survival_status90)~class, data=survival_rate_arfa)
+
+jpeg('arfa_90days_byclass.jpeg', units="in", width=6.5,height=6, res=600)
+ggsurvplot(survival_fit_byclass_arfa, pval=TRUE, title = "90 day survival in ARFA patients", legend.labs=c("Hypoinflammatory", "Hyperinflammatory"), palette = c("blue", "red"), risk.table = FALSE, legend.title = "Class:", font.legend = c(14, "bold", "black"), font.title = c(16, "bold", "black"))
+dev.off()
+##### fit cox ph models to adjust for known predictors of mortality and look for effect of phenotype in the arfa population. 
+survival_coxph_90_arfa <- coxph(Surv(survival_time90_fromICUAdmission, survival_status90)~Age +WorstPaO2FiO2Ratio + SOFAScore  + ardsphenotype, data=survival_rate_arfa)
+summary(survival_coxph_90_arfa)
+survival_coxph_90_arfa <- coxph(Surv(survival_time90_fromICUAdmission, survival_status90)~Age +WorstPaO2FiO2Ratio + SOFAScore  + class, data=survival_rate_arfa)
+summary(survival_coxph_90_arfa)
+
+
+### arfa 30 days
+survival_object30_arfa <- Surv(survival_rate_arfa$survival_time30_fromICUAdmission, survival_rate_arfa$survival_status30)
+survival_object30_arfa
+survival_fit_bypheno30_arfa <- survfit(Surv(survival_time30_fromICUAdmission, survival_status30)~ardsphenotype, data=survival_rate_arfa)
+survival_fit_byclass30_arfa <- survfit(Surv(survival_time30_fromICUAdmission, survival_status30)~class, data=survival_rate_arfa)
+
+jpeg('arfa_30days_pheno.jpeg', units="in", width=6.5,height=5, res=600)
+ggsurvplot(survival_fit_bypheno30_arfa, pval=TRUE, title = "30 day survival in ARFA patients", legend.labs=c("Hypoinflammatory", "Hyperinflammatory"), palette = c("blue", "red"), risk.table = FALSE, legend.title = "Subphenotypes:", font.legend = c(14, "bold", "black"), font.title = c(16, "bold", "black"))
+dev.off()
+
+jpeg('arfa_30days_class.jpeg', units="in", width=6.5,height=5, res=600)
+ggsurvplot(survival_fit_byclass30_arfa, pval=TRUE, title = "30 day survival in ARFA patients", legend.labs=c("Hypoinflammatory", "Hyperinflammatory"), palette = c("blue", "red"), risk.table = FALSE, legend.title = "Class:", font.legend = c(14, "bold", "black"), font.title = c(16, "bold", "black"))
+dev.off()
+
+# for prism no label
+jpeg('arfa_30days_class_forprism.jpeg', units="in", width=6.5,height=5, res=600)
+ggsurvplot(survival_fit_byclass30_arfa, pval=TRUE,  legend="none", palette = c("blue", "red"), risk.table = FALSE )
+dev.off()
+
+# cox model 30 days
+survival_coxph_30_arfa <- coxph(Surv(survival_time30_fromICUAdmission, survival_status90)~Age +WorstPaO2FiO2Ratio + SOFAScore + ardsphenotype, data=survival_rate_arfa)
+summary(survival_coxph_30_arfa)
+survival_coxph_30_arfa <- coxph(Surv(survival_time30_fromICUAdmission, survival_status90)~Age +WorstPaO2FiO2Ratio + SOFAScore + class, data=survival_rate_arfa)
+summary(survival_coxph_30_arfa)
+
+
+######## CONTROLS
+survival_rate_contr <- filter(survival_rate, group=="notatrisk")
+
+# contr 90 days
+survival_object90_contr <- Surv(survival_rate_contr$survival_time90_fromICUAdmission, survival_rate_contr$survival_status90)
+survival_object90_contr
+survival_fit_bypheno_contr <- survfit(Surv(survival_time90_fromICUAdmission, survival_status90)~ardsphenotype, data=survival_rate_contr)
+
+jpeg('contr_90days_bypheno.jpeg', units="in", width=6.5,height=6, res=600)
+ggsurvplot(survival_fit_bypheno_contr, pval=TRUE, title = "90 day survival in Control patients", legend.labs=c("Hypoinflammatory", "Hyperinflammatory"), palette = c("blue", "red"), risk.table = FALSE, legend.title = "Subphenotypes:", font.legend = c(14, "bold", "black"), font.title = c(16, "bold", "black"))
+dev.off()
+
+survival_fit_byclass_contr <- survfit(Surv(survival_time90_fromICUAdmission, survival_status90)~class, data=survival_rate_contr)
+
+jpeg('contr_90days_byclass.jpeg', units="in", width=6.5,height=6, res=600)
+ggsurvplot(survival_fit_byclass_contr, pval=TRUE, title = "90 day survival in Control patients", legend.labs=c("Hypoinflammatory", "Hyperinflammatory"), palette = c("blue", "red"), risk.table = FALSE, legend.title = "Class:", font.legend = c(14, "bold", "black"), font.title = c(16, "bold", "black"))
+dev.off()
+##### fit cox ph models to adjust for known predictors of mortality and look for effect of phenotype in the contr population. 
+survival_coxph_90_contr <- coxph(Surv(survival_time90_fromICUAdmission, survival_status90)~Age +WorstPaO2FiO2Ratio + SOFAScore  + ardsphenotype, data=survival_rate_contr)
+summary(survival_coxph_90_contr)
+survival_coxph_90_contr <- coxph(Surv(survival_time90_fromICUAdmission, survival_status90)~Age +WorstPaO2FiO2Ratio + SOFAScore  + class, data=survival_rate_contr)
+summary(survival_coxph_90_contr)
+
+
+### contr 30 days
+survival_object30_contr <- Surv(survival_rate_contr$survival_time30_fromICUAdmission, survival_rate_contr$survival_status30)
+survival_object30_contr
+survival_fit_bypheno30_contr <- survfit(Surv(survival_time30_fromICUAdmission, survival_status30)~ardsphenotype, data=survival_rate_contr)
+survival_fit_byclass30_contr <- survfit(Surv(survival_time30_fromICUAdmission, survival_status30)~class, data=survival_rate_contr)
+
+jpeg('contr_30days_pheno.jpeg', units="in", width=6.5,height=5, res=600)
+ggsurvplot(survival_fit_bypheno30_contr, pval=TRUE, title = "30 day survival in Control patients", legend.labs=c("Hypoinflammatory", "Hyperinflammatory"), palette = c("blue", "red"), risk.table = FALSE, legend.title = "Subphenotypes:", font.legend = c(14, "bold", "black"), font.title = c(16, "bold", "black"))
+dev.off()
+
+jpeg('contr_30days_class.jpeg', units="in", width=6.5,height=5, res=600)
+ggsurvplot(survival_fit_byclass30_contr, pval=TRUE, title = "30 day survival in Control patients", legend.labs=c("Hypoinflammatory", "Hyperinflammatory"), palette = c("blue", "red"), risk.table = FALSE, legend.title = "Class:", font.legend = c(14, "bold", "black"), font.title = c(16, "bold", "black"))
+dev.off()
+
+# cox model 30 days
+survival_coxph_30_contr <- coxph(Surv(survival_time30_fromICUAdmission, survival_status90)~Age +WorstPaO2FiO2Ratio + SOFAScore + ardsphenotype, data=survival_rate_contr)
+summary(survival_coxph_30_contr)
+survival_coxph_30_contr <- coxph(Surv(survival_time30_fromICUAdmission, survival_status90)~Age +WorstPaO2FiO2Ratio + SOFAScore + class, data=survival_rate_contr)
+summary(survival_coxph_30_contr)
+
+
+
+
+```
+
+
+```{r}
+########## time to event for liberation 
+# time to event analysis of intubation duration data
+# http://www.sthda.com/english/wiki/survminer-r-package-survival-data-analysis-and-visualization#change-x-axis-limits
+# https://www.rdocumentation.org/packages/survminer/versions/0.4.2/topics/ggsurvplot
+
+intubation <- alirpheno_basl
+
+# if duration_fromDOD_toICUDischargeDat = 1, it means this patient never got extubated, censored
+
+
+intubation$DOD <- mdy(intubation$DOD)
+intubation$ICUDischargeDate <- mdy(intubation$ICUDischargeDate)
+
+intubation$duration_fromDOD_toICUDischargeDate <- (ymd(intubation$DOD) - ymd(intubation$ICUDischargeDate)) + 1
+
+# survival_status: censoring status 0=censored, 1=extubated
+intubation <- mutate(intubation, intubation_status = ifelse(intubation$duration_fromDOD_toICUDischargeDate == 1, 0, 1)) 
+intubation$intubation_status[is.na(intubation$duration_fromDOD_toICUDischargeDate)] <- 1
+
+# change censored intubationduration to 151, because they "never get extubated"
+intubation$intubationduration[intubation$intubation_status == 0] <- 151
+
+# create an intubation object
+intubation_object <- Surv(intubation$intubationduration, intubation$intubation_status)
+intubation_object
+# fit a curve
+# by group
+intubation_fit_bygroup <- survfit(Surv(intubationduration, intubation_status)~group, data=intubation)
+ggsurvplot(intubation_fit_bygroup, pval=TRUE, xlim= c(0, 50)) + ylab("intubation_rate")
+
+########## ards by phen and class ###########
+intubation_ards <- filter(intubation, group == "ards")
+intubation_object_ards <- Surv(intubation_ards$intubationduration, intubation_ards$intubation_status)
+intubation_fit_byphen_ards <- survfit(Surv(intubationduration, intubation_status)~ardsphenotype, data=intubation_ards)
+ggsurvplot(intubation_fit_byphen_ards, pval=TRUE, xlim= c(0, 50)) + ylab("intubation_rate")
+intubation_fit_byclass_ards <- survfit(Surv(intubationduration, intubation_status)~class, data=intubation_ards)
+ggsurvplot(intubation_fit_byclass_ards, pval=TRUE, xlim= c(0, 50)) + ylab("intubation_rate")
+
+# publishable figure
+jpeg('timetounassbreath_ards_pheno.jpeg', units="in", width=6.5,height=5, res=600)
+ggsurvplot(intubation_fit_byphen_ards, pval=TRUE, pval.coord = c(25, 0.25), xlim= c(0, 30), fun = "event", censor.shape = "|", censor = TRUE, title = "Time to liberation - ARDS", legend.labs=c("Hypoinflammatory", "Hyperinflammatory"), palette = c("blue", "red"), risk.table = FALSE, legend.title = "Subphenotypes:", font.legend = c(14, "bold", "black"), font.title = c(16, "bold", "black")) + ylab("Proportion ") + xlab("Time from intubation to day 30")
+dev.off()
+
+jpeg('timetounassbreath_ards_class.jpeg', units="in", width=6.5,height=5, res=600)
+ggsurvplot(intubation_fit_byclass_ards, pval=TRUE, pval.coord = c(25, 0.25), xlim= c(0, 30), fun = "event", censor.shape = "|", censor = TRUE, title = "Time to liberation - ARDS", legend.labs=c("Hypoinflammatory", "Hyperinflammatory"), palette = c("blue", "red"), risk.table = FALSE, legend.title = "Class:", font.legend = c(14, "bold", "black"), font.title = c(16, "bold", "black")) + ylab("Proportion ") + xlab("Time from intubation to day 30")
+dev.off()
+# for prism no label
+jpeg('timetounassbreath_ards_class_forprism.jpeg', units="in", width=6.5,height=5, res=600)
+ggsurvplot(intubation_fit_byclass_ards, pval=TRUE, pval.coord = c(25, 0.25), xlim= c(0, 30), fun = "event", censor.shape = "|", censor = TRUE, legend = "none", palette = c("blue", "red"), risk.table = FALSE)  + ylab("Proportion ") + xlab("Time from intubation to day 30")
+dev.off()
+
+# cox models for time to unassisted breathing
+# ardsphenotype
+intubation_coxph_ards <- coxph(Surv(intubationduration, intubation_status)~ WorstPaO2FiO2Ratio + SOFAScore + PEEP + ardsphenotype, data=intubation_ards)
+summary(intubation_coxph_ards)
+intubation_coxph_ards <- coxph(Surv(intubationduration, intubation_status)~ WorstPaO2FiO2Ratio + SOFAScore + PEEP + class, data=intubation_ards)
+summary(intubation_coxph_ards)
+
+
+########## atrisk phen1 vs phen2 ###########
+intubation_atrisk <- filter(intubation, group == "atrisk")
+intubation_object_atrisk <- Surv(intubation_atrisk$intubationduration, intubation_atrisk$intubation_status)
+intubation_fit_byphen_atrisk <- survfit(Surv(intubationduration, intubation_status)~ardsphenotype, data=intubation_atrisk)
+ggsurvplot(intubation_fit_byphen_atrisk, pval=TRUE, xlim= c(0, 50)) + ylab("intubation_rate")
+intubation_fit_byclass_atrisk <- survfit(Surv(intubationduration, intubation_status)~class, data=intubation_atrisk)
+ggsurvplot(intubation_fit_byclass_atrisk, pval=TRUE, xlim= c(0, 50)) + ylab("intubation_rate")
+# publishable figure
+jpeg('timetounassbreath_atrisk_pheno.jpeg', units="in", width=6.5,height=5, res=600)
+ggsurvplot(intubation_fit_byphen_atrisk, pval=TRUE, pval.coord = c(25, 0.25), xlim= c(0, 30), fun = "event", censor.shape = "|", censor = TRUE, title = "Time to unassisted breathing - at-risk", legend.labs=c("Hypoinflammatory", "Hyperinflammatory"), palette = c("blue", "red"), risk.table = FALSE, legend.title = "Subphenotypes:", font.legend = c(14, "bold", "black"), font.title = c(16, "bold", "black")) + ylab("Proportion ") + xlab("Time from intubation day 30")
+dev.off()
+jpeg('timetounassbreath_atrisk_class.jpeg', units="in", width=6.5,height=5, res=600)
+ggsurvplot(intubation_fit_byclass_atrisk, pval=TRUE, pval.coord = c(25, 0.25), xlim= c(0, 30), fun = "event", censor.shape = "|", censor = TRUE, title = "Time to unassisted breathing - at-risk", legend.labs=c("Hypoinflammatory", "Hyperinflammatory"), palette = c("blue", "red"), risk.table = FALSE, legend.title = "Class:", font.legend = c(14, "bold", "black"), font.title = c(16, "bold", "black")) + ylab("Proportion ") + xlab("Time from intubation day 30")
+dev.off()
+
+# for prism no label
+jpeg('timetounassbreath_arfa_class_forprism.jpeg', units="in", width=6.5,height=5, res=600)
+ggsurvplot(intubation_fit_byclass_atrisk, pval=TRUE, pval.coord = c(25, 0.25), xlim= c(0, 30), fun = "event", censor.shape = "|", censor = TRUE, legend = "none", palette = c("blue", "red"), risk.table = FALSE)  + ylab("Proportion ") + xlab("Time from intubation to day 30")
+dev.off()
+
+# cox models for time to unassisted breathing
+intubation_coxph_atrisk <- coxph(Surv(intubationduration, intubation_status)~ WorstPaO2FiO2Ratio + SOFAScore + PEEP + ardsphenotype, data=intubation_atrisk)
+summary(intubation_coxph_atrisk)
+intubation_coxph_atrisk <- coxph(Surv(intubationduration, intubation_status)~ WorstPaO2FiO2Ratio + SOFAScore + PEEP + class, data=intubation_atrisk)
+summary(intubation_coxph_atrisk)
+
+
+########## notatrisk phen1 vs phen2 ###########
+intubation_notatrisk <- filter(intubation, group == "notatrisk")
+intubation_object_notatrisk <- Surv(intubation_notatrisk$intubationduration, intubation_notatrisk$intubation_status)
+intubation_fit_byphen_notatrisk <- survfit(Surv(intubationduration, intubation_status)~ardsphenotype, data=intubation_notatrisk)
+ggsurvplot(intubation_fit_byphen_notatrisk, pval=TRUE, xlim= c(0, 50)) + ylab("intubation_rate")
+intubation_fit_byclass_notatrisk <- survfit(Surv(intubationduration, intubation_status)~class, data=intubation_notatrisk)
+ggsurvplot(intubation_fit_byclass_notatrisk, pval=TRUE, xlim= c(0, 50)) + ylab("intubation_rate")
+# publishable figure
+jpeg('timetounassbreath_notatrisk_pheno.jpeg', units="in", width=6.5,height=5, res=600)
+ggsurvplot(intubation_fit_byphen_notatrisk, pval=TRUE, pval.coord = c(25, 0.25), xlim= c(0, 30), fun = "event", censor.shape = "|", censor = TRUE, title = "Time to unassisted breathing - at-risk", legend.labs=c("Hypoinflammatory", "Hyperinflammatory"), palette = c("blue", "red"), risk.table = FALSE, legend.title = "Subphenotypes:", font.legend = c(14, "bold", "black"), font.title = c(16, "bold", "black")) + ylab("Proportion ") + xlab("Time from intubation day 30")
+dev.off()
+jpeg('timetounassbreath_notatrisk_class.jpeg', units="in", width=6.5,height=5, res=600)
+ggsurvplot(intubation_fit_byclass_notatrisk, pval=TRUE, pval.coord = c(25, 0.25), xlim= c(0, 30), fun = "event", censor.shape = "|", censor = TRUE, title = "Time to unassisted breathing - at-risk", legend.labs=c("Hypoinflammatory", "Hyperinflammatory"), palette = c("blue", "red"), risk.table = FALSE, legend.title = "Class:", font.legend = c(14, "bold", "black"), font.title = c(16, "bold", "black")) + ylab("Proportion ") + xlab("Time from intubation day 30")
+dev.off()
+# cox models for time to unassisted breathing
+intubation_coxph_notatrisk <- coxph(Surv(intubationduration, intubation_status)~ WorstPaO2FiO2Ratio + SOFAScore + PEEP + ardsphenotype, data=intubation_notatrisk)
+summary(intubation_coxph_notatrisk)
+intubation_coxph_notatrisk <- coxph(Surv(intubationduration, intubation_status)~ WorstPaO2FiO2Ratio + SOFAScore + PEEP + class, data=intubation_notatrisk)
+summary(intubation_coxph_notatrisk)
+
+
+
+```
+
+
+
+
+```{r}
+###### trajectories of biomarkers
+
+#### import the clean sampleid baseline file to be named: alirpheno_sampleid
+alirpheno_sampleid_github <- read.csv("~/Desktop/Microbiome/ICU ARDS mbiome/projects/ARDSpheno18/LCA_analyses/alirpheno_sampleid_github.csv")
+alirpheno_sampleid <- alirpheno_sampleid_github
+alirpheno_sampleid$class <-as.factor(alirpheno_sampleid$class)
+### break down by group
+alirpheno_sampleid_ards <-filter(alirpheno_sampleid, group=="ards")
+alirpheno_sampleid_arfa <-filter(alirpheno_sampleid, group=="atrisk")
+alirpheno_sampleid_contr <-filter(alirpheno_sampleid, group=="notatrisk")
+
+######### breakdown by class and biomarker
+# do repeated measures anova for each dotted line to address reviewer comment. 
+
+######### ARDS ####################
+# ANg2
+jpeg('ang2_ards_class.jpeg', units="in", width=5,height=4, res=600)
+  ggplot(alirpheno_sampleid_ards, aes(x = studydayanalysis, y = log(ang2), fill =class)) + 
+   geom_boxplot(width = 0.5, outlier.size = 0.2, notch= FALSE, alpha=0.5)  + 
+   geom_point(position = position_jitterdodge(dodge.width = 0.75), size = 0.4, shape =1) + 
+    labs(y = "log(Concentration)", x = "Followup", title = "Angiopoeitin-2" ) + 
+    theme_pubr() +
+  theme(plot.title = element_text(hjust = 0.5), legend.position = "none", axis.text.x = element_text(colour = "black", size = 12, face = "bold" )) + 
+  scale_fill_manual(values=c("1"="#6666FF", "2" = "#CC0000")) + 
+  stat_compare_means(aes(group = class), label = "p.signif", method = "wilcox.test", color =  c("red"), face = "bold",label.x = c(1.5), size = 8) +
+  ylim(7, 11.5) +
+  stat_summary(fun.y= median, geom="line", aes(group=class), position = position_dodge(0.8), color = c("#8A8A8A"), linetype = 2) 
+  dev.off()
+
+# ang2repeatedmeasures separately for class 1 and 2
+alirpheno_sampleid_ards_class1 <- filter(alirpheno_sampleid_ards, class=="1")
+model=lme(ang2~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_ards_class1, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(ang2~studydayanalysis, data = alirpheno_sampleid_ards_class1)
+summary(fit)
+alirpheno_sampleid_ards_class2 <- filter(alirpheno_sampleid_ards, class=="2")
+model=lme(ang2~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_ards_class2, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(ang2~studydayanalysis, data = alirpheno_sampleid_ards_class2)
+summary(fit)
+# ang2repeatedmeasures with interaction term by class
+model=lme(log(ang2)~studydayanalysis + class + studydayanalysis*class, random=~1|SubjectID, data = alirpheno_sampleid_ards, method = "REML", na.action = na.omit)
+anova(model)
+
+  
+  # RAGE
+jpeg('rage_ards_class.jpeg', units="in", width=5,height=4, res=600)
+    ggplot(alirpheno_sampleid_ards, aes(x = studydayanalysis, y = log(rage), fill = class)) + 
+   geom_boxplot(width = 0.5, outlier.size = 0.2, notch= FALSE, alpha=0.5)  + 
+   geom_point(position = position_jitterdodge(dodge.width = 0.75), size = 0.4) + 
+  labs(y = "log(Concentration)", x = "Followup", title = "RAGE" ) + 
+    theme_pubr() +
+  theme(plot.title = element_text(hjust = 0.5), legend.position = "none", axis.text.x = element_text(colour = "black", size = 12, face = "bold" )) + 
+  scale_fill_manual(values=c("1"="#6666FF", "2" = "#CC0000")) + 
+  stat_compare_means(aes(group = class), label = "p.signif", method = "t.test", color =  c("red"), face = "bold",label.x = c(1.5), size = 8) + 
+  ylim(7, 10.4) +
+  stat_summary(fun.y= median, geom="line", aes(group=class), position = position_dodge(0.8), color = c("#8A8A8A"), linetype = 2) 
+    dev.off()
+ 
+    # ragerepeatedmeasures separately for class 1 and 2
+model=lme(rage~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_ards_class1, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(rage~studydayanalysis, data = alirpheno_sampleid_ards_class1)
+summary(fit)
+model=lme(rage~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_ards_class2, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(rage~studydayanalysis, data = alirpheno_sampleid_ards_class2)
+summary(fit)
+# ragerepeatedmeasures with interaction term by class
+model=lme(log(rage)~studydayanalysis + class + studydayanalysis*class, random=~1|SubjectID, data = alirpheno_sampleid_ards, method = "REML", na.action = na.omit)
+anova(model)
+   
+  # inflammation - IL-6
+jpeg('il6_ards_class.jpeg', units="in", width=5,height=4, res=600)
+  ggplot(alirpheno_sampleid_ards, aes(x = studydayanalysis, y = log(il6), fill = class)) + 
+   geom_boxplot(width = 0.5, outlier.size = 0.2, notch= FALSE, alpha=0.5)  + 
+   geom_point(position = position_jitterdodge(dodge.width = 0.75), size = 0.4) + 
+  labs(y = "log(Concentration)", x = "Followup", title = "IL-6" ) + 
+    theme_pubr() +
+  theme(plot.title = element_text(hjust = 0.5), legend.position = "none", axis.text.x = element_text(colour = "black", size = 12, face = "bold" )) + 
+  scale_fill_manual(values=c("1"="#6666FF", "2" = "#CC0000")) + 
+  stat_compare_means(aes(group = class), label = "p.signif", method = "t.test", color =  c("red"), face = "bold",label.x = c(1.5), size = 8) + 
+  ylim(0, 9) +
+  stat_summary(fun.y= median, geom="line", aes(group=class), position = position_dodge(0.8), color = c("#8A8A8A"), linetype = 2) 
+  dev.off()
+      # il-6- repeatedmeasures separately for class 1 and 2
+model=lme(il6~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_ards_class1, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(il6~studydayanalysis, data = alirpheno_sampleid_ards_class1)
+summary(fit)
+model=lme(il6~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_ards_class2, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(il6~studydayanalysis, data = alirpheno_sampleid_ards_class2)
+summary(fit)
+# il-6 repeatedmeasures with interaction term by class
+model=lme(log(il6)~studydayanalysis + class + studydayanalysis*class, random=~1|SubjectID, data = alirpheno_sampleid_ards, method = "REML", na.action = na.omit)
+anova(model)
+
+
+   # bacterial infection - procalcitonin
+   jpeg('procalcitonin_ards_class.jpeg', units="in", width=5,height=4, res=600)
+  ggplot(alirpheno_sampleid_ards, aes(x = studydayanalysis, y = log(procalcitonin), fill = class)) + 
+   geom_boxplot(width = 0.5, outlier.size = 0.2, notch= FALSE, alpha=0.5)  + 
+   geom_point(position = position_jitterdodge(dodge.width = 0.75), size = 0.4) + 
+  labs(y = "log(Concentration)", x = "Followup", title = "Procalcitonin" ) + 
+    theme_pubr() +
+  theme(plot.title = element_text(hjust = 0.5), legend.position = "none", axis.text.x = element_text(colour = "black", size = 12, face = "bold" )) + 
+  scale_fill_manual(values=c("1"="#6666FF", "2" = "#CC0000")) + 
+  stat_compare_means(aes(group = class), label = "p.signif", method = "t.test", color =  c("red"), face = "bold",label.x = c(1.5), size = 8) + 
+  ylim(3.5, 9.4) +
+  stat_summary(fun.y= median, geom="line", aes(group=class), position = position_dodge(0.8), color = c("#8A8A8A"), linetype = 2) 
+  dev.off()
+  
+  # procalcitonin repeatedmeasures separately for class 1 and 2
+model=lme(procalcitonin~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_ards_class1, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(procalcitonin~studydayanalysis, data = alirpheno_sampleid_ards_class1)
+summary(fit)
+model=lme(procalcitonin~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_ards_class2, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(procalcitonin~studydayanalysis, data = alirpheno_sampleid_ards_class2)
+summary(fit)
+# pct repeatedmeasures with interaction term by class
+model=lme(log(procalcitonin)~studydayanalysis + class + studydayanalysis*class, random=~1|SubjectID, data = alirpheno_sampleid_ards, method = "REML", na.action = na.omit)
+anova(model)
+   
+   
+   
+     # fractalkine
+  jpeg('fractalkine_ards_class.jpeg', units="in", width=5,height=4, res=600)
+  ggplot(alirpheno_sampleid_ards, aes(x = studydayanalysis, y = log(fractalkine), fill = class)) + 
+   geom_boxplot(width = 0.5, outlier.size = 0.2, notch= FALSE, alpha=0.5)  + 
+  geom_point(position = position_jitterdodge(), size = 0.5) + 
+  labs(y = "log(Concentration)", x = "Followup", title = "Fractalkine" ) + 
+    theme_pubr() +
+  theme(plot.title = element_text(hjust = 0.5), legend.position = "none", axis.text.x = element_text(colour = "black", size = 12, face = "bold" )) + 
+  scale_fill_manual(values=c("1"="#6666FF", "2" = "#CC0000")) + 
+  stat_compare_means(aes(group = class), label = "p.signif", method = "t.test", color =  c("red"), face = "bold",label.x = c(1.5), size = 8) + 
+  ylim(5, 9) +
+  stat_summary(fun.y= median, geom="line", aes(group=class), position = position_dodge(0.8), color = c("#8A8A8A"), linetype = 2) 
+  dev.off()
+
+     # fractalkine repeatedmeasures separately for class 1 and 2
+model=lme(fractalkine~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_ards_class1, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(fractalkine~studydayanalysis, data = alirpheno_sampleid_ards_class1)
+summary(fit)
+model=lme(fractalkine~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_ards_class2, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(fractalkine~studydayanalysis, data = alirpheno_sampleid_ards_class2)
+summary(fit)
+# fractalkkine repeatedmeasures with interaction term by class
+model=lme(log(fractalkine)~studydayanalysis + class + studydayanalysis*class, random=~1|SubjectID, data = alirpheno_sampleid_ards, method = "REML", na.action = na.omit)
+anova(model)
+   
+   # St2
+  jpeg('st2_ards_class.jpeg', units="in", width=5,height=4, res=600)
+  ggplot(alirpheno_sampleid_ards, aes(x = studydayanalysis, y = log(st2), fill = class)) + 
+   geom_boxplot(width = 0.5, outlier.size = 0.2, notch= FALSE, alpha=0.5)  + 
+   geom_point(position = position_jitterdodge(dodge.width = 0.75), size = 0.4) + 
+  labs(y = "log(Concentration)", x = "Followup", title = "ST2" ) + 
+    theme_pubr() +
+  theme(plot.title = element_text(hjust = 0.5), legend.position = "none", axis.text.x = element_text(colour = "black", size = 12, face = "bold" )) + 
+  scale_fill_manual(values=c("1"="#6666FF", "2" = "#CC0000")) + 
+  stat_compare_means(aes(group = class), label = "p.signif", method = "t.test", color =  c("red"), face = "bold",label.x = c(1.5), size = 8) +
+  stat_summary(fun.y= median, geom="line", aes(group=class), position = position_dodge(0.8), color = c("#8A8A8A"), linetype = 2) +
+    ylim(9,15)
+  dev.off()
+
+       # st2 repeatedmeasures separately for class 1 and 2
+model=lme(st2~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_ards_class1, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(st2~studydayanalysis, data = alirpheno_sampleid_ards_class1)
+summary(fit)
+model=lme(st2~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_ards_class2, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(st2~studydayanalysis, data = alirpheno_sampleid_ards_class2)
+summary(fit)
+# st2 repeatedmeasures with interaction term by class
+model=lme(log(st2)~studydayanalysis + class + studydayanalysis*class, random=~1|SubjectID, data = alirpheno_sampleid_ards, method = "REML", na.action = na.omit)
+anova(model)
+      
+    # pentraxin3
+jpeg('pentraxin3_ards_class.jpeg', units="in", width=5,height=4, res=600)
+  ggplot(alirpheno_sampleid_ards, aes(x = studydayanalysis, y = log(pentraxin3), fill = class)) + 
+      geom_boxplot(width = 0.5, outlier.size = 0.2, notch= FALSE, alpha=0.5)  + 
+   geom_point(position = position_jitterdodge(dodge.width = 0.75), size = 0.4) + 
+  labs(y = "log(Concentration)", x = "Followup", title = "Pentraxin 3" ) + 
+    theme_pubr() +
+  theme(plot.title = element_text(hjust = 0.5), legend.position = "none", axis.text.x = element_text(colour = "black", size = 12, face = "bold" )) + 
+  scale_fill_manual(values=c("1"="#6666FF", "2" = "#CC0000")) + 
+  stat_compare_means(aes(group = class), label = "p.signif", method = "t.test", color =  c("red"), face = "bold",label.x = c(1.5), size = 8) +
+  stat_summary(fun.y= median, geom="line", aes(group=class), position = position_dodge(0.8), color = c("#8A8A8A"), linetype = 2) +
+    ylim(5,11)
+  dev.off()
+
+       # pentraxin3 repeatedmeasures separately for class 1 and 2
+model=lme(pentraxin3~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_ards_class1, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(pentraxin3~studydayanalysis, data = alirpheno_sampleid_ards_class1)
+summary(fit)
+model=lme(pentraxin3~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_ards_class2, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(pentraxin3~studydayanalysis, data = alirpheno_sampleid_ards_class2)
+summary(fit)
+# pct repeatedmeasures with interaction term by class
+model=lme(log(pentraxin3)~studydayanalysis + class + studydayanalysis*class, random=~1|SubjectID, data = alirpheno_sampleid_ards, method = "REML", na.action = na.omit)
+anova(model)
+
+   
+   #il10
+      jpeg('il10_ards_class.jpeg', units="in", width=5,height=4, res=600)
+  ggplot(alirpheno_sampleid_ards, aes(x = studydayanalysis, y = log(il10), fill = class)) + 
+    geom_boxplot(width = 0.5, outlier.size = 0.2, notch= FALSE, alpha=0.5)  + 
+   geom_point(position = position_jitterdodge(dodge.width = 0.75), size = 0.4) + 
+  labs(y = "log(Concentration)", x = "Followup", title = "IL10" ) + 
+    theme_pubr() +
+  theme(plot.title = element_text(hjust = 0.5), legend.position = "none", axis.text.x = element_text(colour = "black", size = 12, face = "bold" )) + 
+  scale_fill_manual(values=c("1"="#6666FF", "2" = "#CC0000")) + 
+  stat_compare_means(aes(group = class), label = "p.signif", method = "t.test", color =  c("red"), face = "bold",label.x = c(1.5), size = 8) +
+  stat_summary(fun.y= median, geom="line", aes(group=class), position = position_dodge(0.8), color = c("#8A8A8A"), linetype = 2) +
+  ylim(0, 5)
+  dev.off()
+  
+         # il10 repeatedmeasures separately for class 1 and 2
+model=lme(il10~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_ards_class1, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(il10~studydayanalysis, data = alirpheno_sampleid_ards_class1)
+summary(fit)
+model=lme(il10~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_ards_class2, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(il10~studydayanalysis, data = alirpheno_sampleid_ards_class2)
+summary(fit)
+# pct repeatedmeasures with interaction term by class
+model=lme(log(il10)~studydayanalysis + class + studydayanalysis*class, random=~1|SubjectID, data = alirpheno_sampleid_ards, method = "REML", na.action = na.omit)
+anova(model)
+   
+  
+  # IL8
+jpeg('il8_ards_class.jpeg', units="in", width=5,height=4, res=600)
+    ggplot(alirpheno_sampleid_ards, aes(x = studydayanalysis, y = log(il8), fill = class)) + 
+    geom_boxplot(width = 0.5, outlier.size = 0.2, notch= FALSE, alpha=0.5)  + 
+   geom_point(position = position_jitterdodge(dodge.width = 0.75), size = 0.4) + 
+  labs(y = "log(Concentration)", x = "Followup", title = "IL8" ) + 
+    theme_pubr() +
+  theme(plot.title = element_text(hjust = 0.5), legend.position = "none", axis.text.x = element_text(colour = "black", size = 12, face = "bold" )) + 
+  scale_fill_manual(values=c("1"="#6666FF", "2" = "#CC0000")) + 
+  stat_compare_means(aes(group = class), label = "p.signif", method = "t.test", color =  c("red"), face = "bold",label.x = c(1.5), size = 8) +
+  stat_summary(fun.y= median, geom="line", aes(group=class), position = position_dodge(0.8), color = c("#8A8A8A"), linetype = 2) 
+    dev.off()
+  
+           # il8 repeatedmeasures separately for class 1 and 2
+model=lme(il8~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_ards_class1, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(il8~studydayanalysis, data = alirpheno_sampleid_ards_class1)
+summary(fit)
+model=lme(il8~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_ards_class2, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(il8~studydayanalysis, data = alirpheno_sampleid_ards_class2)
+summary(fit)
+# pct repeatedmeasures with interaction term by class
+model=lme(log(il8)~studydayanalysis + class + studydayanalysis*class, random=~1|SubjectID, data = alirpheno_sampleid_ards, method = "REML", na.action = na.omit)
+anova(model)
+   
+    
+      # TNFR1
+jpeg('tnfr1_ards_class.jpeg', units="in", width=5,height=4, res=600)
+    ggplot(alirpheno_sampleid_ards, aes(x = studydayanalysis, y = log(tnfr1), fill = class)) + 
+    geom_boxplot(width = 0.5, outlier.size = 0.2, notch= FALSE, alpha=0.5)  + 
+   geom_point(position = position_jitterdodge(dodge.width = 0.75), size = 0.4) + 
+  labs(y = "log(Concentration)", x = "Followup", title = "TNFR1" ) + 
+    theme_pubr() +
+  theme(plot.title = element_text(hjust = 0.5), legend.position = "none", axis.text.x = element_text(colour = "black", size = 12, face = "bold" )) + 
+  scale_fill_manual(values=c("1"="#6666FF", "2" = "#CC0000")) + 
+  stat_compare_means(aes(group = class), label = "p.signif", method = "t.test", color =  c("red"), face = "bold",label.x = c(1.5), size = 8) +
+  stat_summary(fun.y= median, geom="line", aes(group=class), position = position_dodge(0.8), color = c("#8A8A8A"), linetype = 2) 
+    dev.off()
+    
+              # tnfr1 repeatedmeasures separately for class 1 and 2
+model=lme(tnfr1~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_ards_class1, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(tnfr1~studydayanalysis, data = alirpheno_sampleid_ards_class1)
+summary(fit)
+model=lme(tnfr1~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_ards_class2, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(tnfr1~studydayanalysis, data = alirpheno_sampleid_ards_class2)
+summary(fit)
+# pct repeatedmeasures with interaction term by class
+model=lme(log(tnfr1)~studydayanalysis + class + studydayanalysis*class, random=~1|SubjectID, data = alirpheno_sampleid_ards, method = "REML", na.action = na.omit)
+anova(model)
+  
+    
+    
+    ########## ARFA ####################
+  # ANg2
+jpeg('ang2_arfa_class.jpeg', units="in", width=5,height=4, res=600)
+  ggplot(alirpheno_sampleid_arfa, aes(x = studydayanalysis, y = log(ang2), fill =class)) + 
+   geom_boxplot(width = 0.5, outlier.size = 0.2, notch= FALSE, alpha=0.5)  + 
+   geom_point(position = position_jitterdodge(dodge.width = 0.75), size = 0.4, shape =1) + 
+    labs(y = "log(Concentration)", x = "Followup", title = "Angiopoietin-2" ) + 
+    theme_pubr() +
+  theme(plot.title = element_text(hjust = 0.5), legend.position = "none", axis.text.x = element_text(colour = "black", size = 12, face = "bold" )) + 
+  scale_fill_manual(values=c("1"="#6666FF", "2" = "#CC0000")) + 
+  stat_compare_means(aes(group = class), label = "p.signif", method = "wilcox.test", color =  c("red"), face = "bold",label.x = c(1.5), size = 8) +
+  ylim(7, 11.5) +
+  stat_summary(fun.y= median, geom="line", aes(group=class), position = position_dodge(0.8), color = c("#8A8A8A"), linetype = 2) 
+  dev.off()
+
+# ang2repeatedmeasures separately for class 1 and 2
+alirpheno_sampleid_arfa_class1 <- filter(alirpheno_sampleid_arfa, class=="1")
+model=lme(ang2~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_arfa_class1, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(ang2~studydayanalysis, data = alirpheno_sampleid_arfa_class1)
+summary(fit)
+alirpheno_sampleid_arfa_class2 <- filter(alirpheno_sampleid_arfa, class=="2")
+model=lme(ang2~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_arfa_class2, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(ang2~studydayanalysis, data = alirpheno_sampleid_arfa_class2)
+summary(fit)
+# ang2 repeatedmeasures with interaction term by class
+model=lme(log(ang2)~studydayanalysis + class + studydayanalysis*class, random=~1|SubjectID, data = alirpheno_sampleid_arfa, method = "REML", na.action = na.omit)
+anova(model)
+  
+  # RAGE
+jpeg('rage_arfa_class.jpeg', units="in", width=5,height=4, res=600)
+    ggplot(alirpheno_sampleid_arfa, aes(x = studydayanalysis, y = log(rage), fill = class)) + 
+   geom_boxplot(width = 0.5, outlier.size = 0.2, notch= FALSE, alpha=0.5)  + 
+   geom_point(position = position_jitterdodge(dodge.width = 0.75), size = 0.4) + 
+  labs(y = "log(Concentration)", x = "Followup", title = "RAGE" ) + 
+    theme_pubr() +
+  theme(plot.title = element_text(hjust = 0.5), legend.position = "none", axis.text.x = element_text(colour = "black", size = 12, face = "bold" )) + 
+  scale_fill_manual(values=c("1"="#6666FF", "2" = "#CC0000")) + 
+  stat_compare_means(aes(group = class), label = "p.signif", method = "t.test", color =  c("red"), face = "bold",label.x = c(1.5), size = 8) + 
+  ylim(7, 10.4) +
+  stat_summary(fun.y= median, geom="line", aes(group=class), position = position_dodge(0.8), color = c("#8A8A8A"), linetype = 2) 
+    dev.off()
+ 
+    # ragerepeatedmeasures separately for class 1 and 2
+model=lme(rage~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_arfa_class1, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(rage~studydayanalysis, data = alirpheno_sampleid_arfa_class1)
+summary(fit)
+model=lme(rage~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_arfa_class2, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(rage~studydayanalysis, data = alirpheno_sampleid_arfa_class2)
+summary(fit)
+# rage repeatedmeasures with interaction term by class
+model=lme(log(rage)~studydayanalysis + class + studydayanalysis*class, random=~1|SubjectID, data = alirpheno_sampleid_arfa, method = "REML", na.action = na.omit)
+anova(model)
+   
+  # inflammation - IL-6
+jpeg('il6_arfa_class.jpeg', units="in", width=5,height=4, res=600)
+  ggplot(alirpheno_sampleid_arfa, aes(x = studydayanalysis, y = log(il6), fill = class)) + 
+   geom_boxplot(width = 0.5, outlier.size = 0.2, notch= FALSE, alpha=0.5)  + 
+   geom_point(position = position_jitterdodge(dodge.width = 0.75), size = 0.4) + 
+  labs(y = "log(Concentration)", x = "Followup", title = "IL-6" ) + 
+    theme_pubr() +
+  theme(plot.title = element_text(hjust = 0.5), legend.position = "none", axis.text.x = element_text(colour = "black", size = 12, face = "bold" )) + 
+  scale_fill_manual(values=c("1"="#6666FF", "2" = "#CC0000")) + 
+  stat_compare_means(aes(group = class), label = "p.signif", method = "t.test", color =  c("red"), face = "bold",label.x = c(1.5), size = 8) + 
+  ylim(0, 9) +
+  stat_summary(fun.y= median, geom="line", aes(group=class), position = position_dodge(0.8), color = c("#8A8A8A"), linetype = 2) 
+  dev.off()
+      # il-6- repeatedmeasures separately for class 1 and 2
+model=lme(il6~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_arfa_class1, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(il6~studydayanalysis, data = alirpheno_sampleid_arfa_class1)
+summary(fit)
+model=lme(il6~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_arfa_class2, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(il6~studydayanalysis, data = alirpheno_sampleid_arfa_class2)
+summary(fit)
+# il6 repeatedmeasures with interaction term by class
+model=lme(log(il6)~studydayanalysis + class + studydayanalysis*class, random=~1|SubjectID, data = alirpheno_sampleid_arfa, method = "REML", na.action = na.omit)
+anova(model)
+
+   # bacterial infection - procalcitonin
+   jpeg('procalcitonin_arfa_class.jpeg', units="in", width=5,height=4, res=600)
+  ggplot(alirpheno_sampleid_arfa, aes(x = studydayanalysis, y = log(procalcitonin), fill = class)) + 
+   geom_boxplot(width = 0.5, outlier.size = 0.2, notch= FALSE, alpha=0.5)  + 
+   geom_point(position = position_jitterdodge(dodge.width = 0.75), size = 0.4) + 
+  labs(y = "log(Concentration)", x = "Followup", title = "Procalcitonin" ) + 
+    theme_pubr() +
+  theme(plot.title = element_text(hjust = 0.5), legend.position = "none", axis.text.x = element_text(colour = "black", size = 12, face = "bold" )) + 
+  scale_fill_manual(values=c("1"="#6666FF", "2" = "#CC0000")) + 
+  stat_compare_means(aes(group = class), label = "p.signif", method = "t.test", color =  c("red"), face = "bold",label.x = c(1.5), size = 8) + 
+  ylim(3.5, 9.4) +
+  stat_summary(fun.y= median, geom="line", aes(group=class), position = position_dodge(0.8), color = c("#8A8A8A"), linetype = 2) 
+  dev.off()
+  
+  # procalcitonin repeatedmeasures separately for class 1 and 2
+model=lme(procalcitonin~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_arfa_class1, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(procalcitonin~studydayanalysis, data = alirpheno_sampleid_arfa_class1)
+summary(fit)
+model=lme(procalcitonin~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_arfa_class2, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(procalcitonin~studydayanalysis, data = alirpheno_sampleid_arfa_class2)
+summary(fit)
+   # pct repeatedmeasures with interaction term by class
+model=lme(log(procalcitonin)~studydayanalysis + class + studydayanalysis*class, random=~1|SubjectID, data = alirpheno_sampleid_arfa, method = "REML", na.action = na.omit)
+anova(model)
+   
+   
+     # fractalkine
+  jpeg('fractalkine_arfa_class.jpeg', units="in", width=5,height=4, res=600)
+  ggplot(alirpheno_sampleid_arfa, aes(x = studydayanalysis, y = log(fractalkine), fill = class)) + 
+   geom_boxplot(width = 0.5, outlier.size = 0.2, notch= FALSE, alpha=0.5)  + 
+  geom_point(position = position_jitterdodge(), size = 0.5) + 
+  labs(y = "log(Concentration)", x = "Followup", title = "Fractalkine" ) + 
+    theme_pubr() +
+  theme(plot.title = element_text(hjust = 0.5), legend.position = "none", axis.text.x = element_text(colour = "black", size = 12, face = "bold" )) + 
+  scale_fill_manual(values=c("1"="#6666FF", "2" = "#CC0000")) + 
+  stat_compare_means(aes(group = class), label = "p.signif", method = "t.test", color =  c("red"), face = "bold",label.x = c(1.5), size = 8) + 
+  ylim(5, 9) +
+  stat_summary(fun.y= median, geom="line", aes(group=class), position = position_dodge(0.8), color = c("#8A8A8A"), linetype = 2) 
+  dev.off()
+
+     # fractalkine repeatedmeasures separately for class 1 and 2
+model=lme(fractalkine~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_arfa_class1, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(fractalkine~studydayanalysis, data = alirpheno_sampleid_arfa_class1)
+summary(fit)
+model=lme(fractalkine~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_arfa_class2, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(fractalkine~studydayanalysis, data = alirpheno_sampleid_arfa_class2)
+summary(fit)
+# fractalkine repeatedmeasures with interaction term by class
+model=lme(log(fractalkine)~studydayanalysis + class + studydayanalysis*class, random=~1|SubjectID, data = alirpheno_sampleid_arfa, method = "REML", na.action = na.omit)
+anova(model)
+   
+   # St2
+  jpeg('st2_arfa_class.jpeg', units="in", width=5,height=4, res=600)
+  ggplot(alirpheno_sampleid_arfa, aes(x = studydayanalysis, y = log(st2), fill = class)) + 
+   geom_boxplot(width = 0.5, outlier.size = 0.2, notch= FALSE, alpha=0.5)  + 
+   geom_point(position = position_jitterdodge(dodge.width = 0.75), size = 0.4) + 
+  labs(y = "log(Concentration)", x = "Followup", title = "ST2" ) + 
+    theme_pubr() +
+  theme(plot.title = element_text(hjust = 0.5), legend.position = "none", axis.text.x = element_text(colour = "black", size = 12, face = "bold" )) + 
+  scale_fill_manual(values=c("1"="#6666FF", "2" = "#CC0000")) + 
+  stat_compare_means(aes(group = class), label = "p.signif", method = "t.test", color =  c("red"), face = "bold",label.x = c(1.5), size = 8) +
+  stat_summary(fun.y= median, geom="line", aes(group=class), position = position_dodge(0.8), color = c("#8A8A8A"), linetype = 2) +
+    ylim(9,15)
+  dev.off()
+
+       # st2 repeatedmeasures separately for class 1 and 2
+model=lme(st2~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_arfa_class1, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(st2~studydayanalysis, data = alirpheno_sampleid_arfa_class1)
+summary(fit)
+model=lme(st2~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_arfa_class2, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(st2~studydayanalysis, data = alirpheno_sampleid_arfa_class2)
+summary(fit)
+# st2 repeatedmeasures with interaction term by class
+model=lme(log(st2)~studydayanalysis + class + studydayanalysis*class, random=~1|SubjectID, data = alirpheno_sampleid_arfa, method = "REML", na.action = na.omit)
+anova(model)
+      
+    # pentraxin3
+jpeg('pentraxin3_arfa_class.jpeg', units="in", width=5,height=4, res=600)
+  ggplot(alirpheno_sampleid_arfa, aes(x = studydayanalysis, y = log(pentraxin3), fill = class)) + 
+      geom_boxplot(width = 0.5, outlier.size = 0.2, notch= FALSE, alpha=0.5)  + 
+   geom_point(position = position_jitterdodge(dodge.width = 0.75), size = 0.4) + 
+  labs(y = "log(Concentration)", x = "Followup", title = "Pentraxin 3" ) + 
+    theme_pubr() +
+  theme(plot.title = element_text(hjust = 0.5), legend.position = "none", axis.text.x = element_text(colour = "black", size = 12, face = "bold" )) + 
+  scale_fill_manual(values=c("1"="#6666FF", "2" = "#CC0000")) + 
+  stat_compare_means(aes(group = class), label = "p.signif", method = "t.test", color =  c("red"), face = "bold",label.x = c(1.5), size = 8) +
+  stat_summary(fun.y= median, geom="line", aes(group=class), position = position_dodge(0.8), color = c("#8A8A8A"), linetype = 2) +
+    ylim(5,11)
+  dev.off()
+
+       # pentraxin3 repeatedmeasures separately for class 1 and 2
+model=lme(pentraxin3~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_arfa_class1, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(pentraxin3~studydayanalysis, data = alirpheno_sampleid_arfa_class1)
+summary(fit)
+model=lme(pentraxin3~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_arfa_class2, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(pentraxin3~studydayanalysis, data = alirpheno_sampleid_arfa_class2)
+summary(fit)
+# pentraxin3 repeatedmeasures with interaction term by class
+model=lme(log(pentraxin3)~studydayanalysis + class + studydayanalysis*class, random=~1|SubjectID, data = alirpheno_sampleid_arfa, method = "REML", na.action = na.omit)
+anova(model)
+
+   
+   #il10
+      jpeg('il10_arfa_class.jpeg', units="in", width=5,height=4, res=600)
+  ggplot(alirpheno_sampleid_arfa, aes(x = studydayanalysis, y = log(il10), fill = class)) + 
+    geom_boxplot(width = 0.5, outlier.size = 0.2, notch= FALSE, alpha=0.5)  + 
+   geom_point(position = position_jitterdodge(dodge.width = 0.75), size = 0.4) + 
+  labs(y = "log(Concentration)", x = "Followup", title = "IL10" ) + 
+    theme_pubr() +
+  theme(plot.title = element_text(hjust = 0.5), legend.position = "none", axis.text.x = element_text(colour = "black", size = 12, face = "bold" )) + 
+  scale_fill_manual(values=c("1"="#6666FF", "2" = "#CC0000")) + 
+  stat_compare_means(aes(group = class), label = "p.signif", method = "t.test", color =  c("red"), face = "bold",label.x = c(1.5), size = 8) +
+  stat_summary(fun.y= median, geom="line", aes(group=class), position = position_dodge(0.8), color = c("#8A8A8A"), linetype = 2) +
+  ylim(0, 5)
+  dev.off()
+  
+         # il10 repeatedmeasures separately for class 1 and 2
+model=lme(il10~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_arfa_class1, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(il10~studydayanalysis, data = alirpheno_sampleid_arfa_class1)
+summary(fit)
+model=lme(il10~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_arfa_class2, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(il10~studydayanalysis, data = alirpheno_sampleid_arfa_class2)
+summary(fit)
+# il10 repeatedmeasures with interaction term by class
+model=lme(log(il10)~studydayanalysis + class + studydayanalysis*class, random=~1|SubjectID, data = alirpheno_sampleid_arfa, method = "REML", na.action = na.omit)
+anova(model)
+   
+  
+  # IL8
+jpeg('il8_arfa_class.jpeg', units="in", width=5,height=4, res=600)
+    ggplot(alirpheno_sampleid_arfa, aes(x = studydayanalysis, y = log(il8), fill = class)) + 
+    geom_boxplot(width = 0.5, outlier.size = 0.2, notch= FALSE, alpha=0.5)  + 
+   geom_point(position = position_jitterdodge(dodge.width = 0.75), size = 0.4) + 
+  labs(y = "log(Concentration)", x = "Followup", title = "IL8" ) + 
+    theme_pubr() +
+  theme(plot.title = element_text(hjust = 0.5), legend.position = "none", axis.text.x = element_text(colour = "black", size = 12, face = "bold" )) + 
+  scale_fill_manual(values=c("1"="#6666FF", "2" = "#CC0000")) + 
+  stat_compare_means(aes(group = class), label = "p.signif", method = "t.test", color =  c("red"), face = "bold",label.x = c(1.5), size = 8) +
+  stat_summary(fun.y= median, geom="line", aes(group=class), position = position_dodge(0.8), color = c("#8A8A8A"), linetype = 2) 
+    dev.off()
+  
+           # il8 repeatedmeasures separately for class 1 and 2
+model=lme(il8~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_arfa_class1, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(il8~studydayanalysis, data = alirpheno_sampleid_arfa_class1)
+summary(fit)
+model=lme(il8~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_arfa_class2, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(il8~studydayanalysis, data = alirpheno_sampleid_arfa_class2)
+summary(fit)
+# il8 repeatedmeasures with interaction term by class
+model=lme(log(il8)~studydayanalysis + class + studydayanalysis*class, random=~1|SubjectID, data = alirpheno_sampleid_arfa, method = "REML", na.action = na.omit)
+anova(model)
+   
+    
+      # TNFR1
+jpeg('tnfr1_arfa_class.jpeg', units="in", width=5,height=4, res=600)
+    ggplot(alirpheno_sampleid_arfa, aes(x = studydayanalysis, y = log(tnfr1), fill = class)) + 
+    geom_boxplot(width = 0.5, outlier.size = 0.2, notch= FALSE, alpha=0.5)  + 
+   geom_point(position = position_jitterdodge(dodge.width = 0.75), size = 0.4) + 
+  labs(y = "log(Concentration)", x = "Followup", title = "TNFR1" ) + 
+    theme_pubr() +
+  theme(plot.title = element_text(hjust = 0.5), legend.position = "none", axis.text.x = element_text(colour = "black", size = 12, face = "bold" )) + 
+  scale_fill_manual(values=c("1"="#6666FF", "2" = "#CC0000")) + 
+  stat_compare_means(aes(group = class), label = "p.signif", method = "t.test", color =  c("red"), face = "bold",label.x = c(1.5), size = 8) +
+  stat_summary(fun.y= median, geom="line", aes(group=class), position = position_dodge(0.8), color = c("#8A8A8A"), linetype = 2) 
+    dev.off()
+    
+              # tnfr1 repeatedmeasures separately for class 1 and 2
+model=lme(tnfr1~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_arfa_class1, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(tnfr1~studydayanalysis, data = alirpheno_sampleid_arfa_class1)
+summary(fit)
+model=lme(tnfr1~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_arfa_class2, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(tnfr1~studydayanalysis, data = alirpheno_sampleid_arfa_class2)
+summary(fit)
+  # tnfr1 repeatedmeasures with interaction term by class
+model=lme(log(tnfr1)~studydayanalysis + class + studydayanalysis*class, random=~1|SubjectID, data = alirpheno_sampleid_arfa, method = "REML", na.action = na.omit)
+anova(model)
+    
+  
+########## compare ards vs. arfa trajectories
+alirpheno_sampleid_ardsarfa <- filter(alirpheno_sampleid, group=="ards" | group=="atrisk")
+  # ANg2
+jpeg('ang2_ardsvsarfa.jpeg', units="in", width=5,height=4, res=600)
+  ggplot(alirpheno_sampleid_ardsarfa, aes(x = studydayanalysis, y = log(ang2), fill =group)) + 
+   geom_boxplot(width = 0.5, outlier.size = 0.2, notch= FALSE, alpha=0.5)  + 
+   geom_point(position = position_jitterdodge(dodge.width = 0.75), size = 0.4, shape =1) + 
+    labs(y = "log(Concentration)", x = "Followup", title = "Angiopoietin-2" ) + 
+    theme_pubr() +
+  theme(plot.title = element_text(hjust = 0.5), legend.position = "none", axis.text.x = element_text(colour = "black", size = 12, face = "bold" )) + 
+  scale_fill_manual(values=c("ards"="orange", "atrisk" = "green")) + 
+  stat_compare_means(aes(group = group), label = "p.signif", method = "wilcox.test", color =  c("red"), face = "bold",label.x = c(1.5), size = 8) +
+  ylim(7, 11.5) +
+  stat_summary(fun.y= median, geom="line", aes(group=group), position = position_dodge(0.8), color = c("#8A8A8A"), linetype = 2) 
+  dev.off()
+  
+  
+    # RAGE
+jpeg('rage_ardsvsarfa.jpeg', units="in", width=5,height=4, res=600)
+  ggplot(alirpheno_sampleid_ardsarfa, aes(x = studydayanalysis, y = log(rage), fill =group)) + 
+   geom_boxplot(width = 0.5, outlier.size = 0.2, notch= FALSE, alpha=0.5)  + 
+   geom_point(position = position_jitterdodge(dodge.width = 0.75), size = 0.4, shape =1) + 
+    labs(y = "log(Concentration)", x = "Followup", title = "RAGE" ) + 
+    theme_pubr() +
+  theme(plot.title = element_text(hjust = 0.5), legend.position = "none", axis.text.x = element_text(colour = "black", size = 12, face = "bold" )) + 
+  scale_fill_manual(values=c("ards"="orange", "atrisk" = "green")) + 
+  stat_compare_means(aes(group = group), label = "p.signif", method = "wilcox.test", color =  c("red"), face = "bold",label.x = c(1.5), size = 8)  +
+  stat_summary(fun.y= median, geom="line", aes(group=group), position = position_dodge(0.8), color = c("#8A8A8A"), linetype = 2) 
+  dev.off()
+  
+  
+  
+      # tnfr1
+jpeg('tnfr1_ardsvsarfa.jpeg', units="in", width=5,height=4, res=600)
+  ggplot(alirpheno_sampleid_ardsarfa, aes(x = studydayanalysis, y = log(tnfr1), fill =group)) + 
+   geom_boxplot(width = 0.5, outlier.size = 0.2, notch= FALSE, alpha=0.5)  + 
+   geom_point(position = position_jitterdodge(dodge.width = 0.75), size = 0.4, shape =1) + 
+    labs(y = "log(Concentration)", x = "Followup", title = "TNFR1" ) + 
+    theme_pubr() +
+  theme(plot.title = element_text(hjust = 0.5), legend.position = "none", axis.text.x = element_text(colour = "black", size = 12, face = "bold" )) + 
+  scale_fill_manual(values=c("ards"="orange", "atrisk" = "green")) + 
+  stat_compare_means(aes(group = group), label = "p.signif", method = "wilcox.test", color =  c("red"), face = "bold",label.x = c(1.5), size = 8) +
+  stat_summary(fun.y= median, geom="line", aes(group=group), position = position_dodge(0.8), color = c("#8A8A8A"), linetype = 2) 
+  dev.off()
+        # procalcitonin
+jpeg('pct_ardsvsarfa.jpeg', units="in", width=5,height=4, res=600)
+  ggplot(alirpheno_sampleid_ardsarfa, aes(x = studydayanalysis, y = log(procalcitonin), fill =group)) + 
+   geom_boxplot(width = 0.5, outlier.size = 0.2, notch= FALSE, alpha=0.5)  + 
+   geom_point(position = position_jitterdodge(dodge.width = 0.75), size = 0.4, shape =1) + 
+    labs(y = "log(Concentration)", x = "Followup", title = "Procalcitonin" ) + 
+    theme_pubr() +
+  theme(plot.title = element_text(hjust = 0.5), legend.position = "none", axis.text.x = element_text(colour = "black", size = 12, face = "bold" )) + 
+  scale_fill_manual(values=c("ards"="orange", "atrisk" = "green")) + 
+  stat_compare_means(aes(group = group), label = "p.signif", method = "wilcox.test", color =  c("red"), face = "bold",label.x = c(1.5), size = 8) +
+  ylim(3.5, 9.4) +
+  stat_summary(fun.y= median, geom="line", aes(group=group), position = position_dodge(0.8), color = c("#8A8A8A"), linetype = 2) 
+  dev.off()
+  
+  
+
+```
+
+```{r}
+## obtain values and wilcox.test comparisons for biomarkers at followup intervals
+### define middle and late interval datasets
+
+## ards
+alirpheno_sampleid_ards_middle <- filter(alirpheno_sampleid_ards, studydayanalysis=="middle")
+alirpheno_sampleid_ards_late <- filter(alirpheno_sampleid_ards, studydayanalysis=="late")
+alirpheno_sampleid_ards_verylate <- filter(alirpheno_sampleid_ards, studydayanalysis=="very_late")
+
+#define biomarkers continuous variable for tableone package
+vars_biomarkers <- c("il6","il8","il10","tnfr1","ang2","pentraxin3","fractalkine","st2","procalcitonin","rage")
+# create continuous table for each intercal. 
+
+biomarkers_ards_middle_class <- print(CreateContTable(vars = vars_biomarkers, strata = "class",data=alirpheno_sampleid_ards_middle), nonnormal = vars_continuous, digits  = 1, pDigits = 2)
+
+biomarkers_ards_late_class <- print(CreateContTable(vars = vars_biomarkers, strata = "class",data=alirpheno_sampleid_ards_late), nonnormal = vars_continuous, digits  = 1, pDigits = 2)
+
+biomarkers_ards_verylate_class <- print(CreateContTable(vars = vars_biomarkers, strata = "class",data=alirpheno_sampleid_ards_verylate), nonnormal = vars_continuous, digits  = 1, pDigits = 2)
+
+# arfa
+alirpheno_sampleid_arfa_middle <- filter(alirpheno_sampleid_arfa, studydayanalysis=="middle")
+alirpheno_sampleid_arfa_late <- filter(alirpheno_sampleid_arfa, studydayanalysis=="late")
+alirpheno_sampleid_arfa_verylate <- filter(alirpheno_sampleid_arfa, studydayanalysis=="very_late")
+
+# create continuous table for each interval. 
+
+biomarkers_arfa_middle_class <- print(CreateContTable(vars = vars_biomarkers, strata = "class",data=alirpheno_sampleid_arfa_middle), nonnormal = vars_continuous, digits  = 1, pDigits = 2)
+
+biomarkers_arfa_late_class <- print(CreateContTable(vars = vars_biomarkers, strata = "class",data=alirpheno_sampleid_arfa_late), nonnormal = vars_continuous, digits  = 1, pDigits = 2)
+
+biomarkers_arfa_verylate_class <- print(CreateContTable(vars = vars_biomarkers, strata = "class",data=alirpheno_sampleid_arfa_verylate), nonnormal = vars_continuous, digits  = 1, pDigits = 2)
+
+
+
+```
+
+
+
+
+```{r}
+###### repeat longitudinal biomarker analyses for ardsphenotype
+######### ARDS ####################
+# ANg2
+jpeg('ang2_ards_ardsphenotype.jpeg', units="in", width=5,height=4, res=600)
+  ggplot(alirpheno_sampleid_ards, aes(x = studydayanalysis, y = log(ang2), fill =ardsphenotype)) + 
+   geom_boxplot(width = 0.5, outlier.size = 0.2, notch= FALSE, alpha=0.5)  + 
+   geom_point(position = position_jitterdodge(dodge.width = 0.75), size = 0.4, shape =1) + 
+    labs(y = "log(Concentration)", x = "Followup", title = "Angiopoietin-2" ) + 
+    theme_pubr() +
+  theme(plot.title = element_text(hjust = 0.5), legend.position = "none", axis.text.x = element_text(colour = "black", size = 12, face = "bold" )) + 
+  scale_fill_manual(values=c("phen1"="#6666FF", "phen2" = "#CC0000")) + 
+  stat_compare_means(aes(group = ardsphenotype), label = "p.signif", method = "wilcox.test", color =  c("red"), face = "bold",label.x = c(1.5), size = 8) +
+  ylim(7, 11.5) +
+  stat_summary(fun.y= median, geom="line", aes(group=ardsphenotype), position = position_dodge(0.8), color = c("#8A8A8A"), linetype = 2) 
+  dev.off()
+
+# ang2repeatedmeasures separately for ardsphenotype 1 and 2
+alirpheno_sampleid_ards_ardsphenotype1 <- filter(alirpheno_sampleid_ards, ardsphenotype=="phen1")
+model=lme(ang2~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_ards_ardsphenotype1, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(ang2~studydayanalysis, data = alirpheno_sampleid_ards_ardsphenotype1)
+summary(fit)
+alirpheno_sampleid_ards_ardsphenotype2 <- filter(alirpheno_sampleid_ards, ardsphenotype=="phen2")
+model=lme(ang2~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_ards_ardsphenotype2, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(ang2~studydayanalysis, data = alirpheno_sampleid_ards_ardsphenotype2)
+summary(fit)
+  
+  # RAGE
+jpeg('rage_ards_ardsphenotype.jpeg', units="in", width=5,height=4, res=600)
+    ggplot(alirpheno_sampleid_ards, aes(x = studydayanalysis, y = log(rage), fill = ardsphenotype)) + 
+   geom_boxplot(width = 0.5, outlier.size = 0.2, notch= FALSE, alpha=0.5)  + 
+   geom_point(position = position_jitterdodge(dodge.width = 0.75), size = 0.4) + 
+  labs(y = "log(Concentration)", x = "Followup", title = "RAGE" ) + 
+    theme_pubr() +
+  theme(plot.title = element_text(hjust = 0.5), legend.position = "none", axis.text.x = element_text(colour = "black", size = 12, face = "bold" )) + 
+  scale_fill_manual(values=c("phen1"="#6666FF", "phen2" = "#CC0000")) + 
+  stat_compare_means(aes(group = ardsphenotype), label = "p.signif", method = "t.test", color =  c("red"), face = "bold",label.x = c(1.5), size = 8) + 
+  ylim(7, 10.4) +
+  stat_summary(fun.y= median, geom="line", aes(group=ardsphenotype), position = position_dodge(0.8), color = c("#8A8A8A"), linetype = 2) 
+    dev.off()
+ 
+    # ragerepeatedmeasures separately for ardsphenotype 1 and 2
+model=lme(rage~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_ards_ardsphenotype1, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(rage~studydayanalysis, data = alirpheno_sampleid_ards_ardsphenotype1)
+summary(fit)
+model=lme(rage~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_ards_ardsphenotype2, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(rage~studydayanalysis, data = alirpheno_sampleid_ards_ardsphenotype2)
+summary(fit)
+   
+  # inflammation - IL-6
+jpeg('il6_ards_ardsphenotype.jpeg', units="in", width=5,height=4, res=600)
+  ggplot(alirpheno_sampleid_ards, aes(x = studydayanalysis, y = log(il6), fill = ardsphenotype)) + 
+   geom_boxplot(width = 0.5, outlier.size = 0.2, notch= FALSE, alpha=0.5)  + 
+   geom_point(position = position_jitterdodge(dodge.width = 0.75), size = 0.4) + 
+  labs(y = "log(Concentration)", x = "Followup", title = "IL-6" ) + 
+    theme_pubr() +
+  theme(plot.title = element_text(hjust = 0.5), legend.position = "none", axis.text.x = element_text(colour = "black", size = 12, face = "bold" )) + 
+  scale_fill_manual(values=c("phen1"="#6666FF", "phen2" = "#CC0000")) + 
+  stat_compare_means(aes(group = ardsphenotype), label = "p.signif", method = "t.test", color =  c("red"), face = "bold",label.x = c(1.5), size = 8) + 
+  ylim(0, 9) +
+  stat_summary(fun.y= median, geom="line", aes(group=ardsphenotype), position = position_dodge(0.8), color = c("#8A8A8A"), linetype = 2) 
+  dev.off()
+      # il-6- repeatedmeasures separately for ardsphenotype 1 and 2
+model=lme(il6~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_ards_ardsphenotype1, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(il6~studydayanalysis, data = alirpheno_sampleid_ards_ardsphenotype1)
+summary(fit)
+model=lme(il6~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_ards_ardsphenotype2, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(il6~studydayanalysis, data = alirpheno_sampleid_ards_ardsphenotype2)
+summary(fit)
+
+   # bacterial infection - procalcitonin
+   jpeg('procalcitonin_ards_ardsphenotype.jpeg', units="in", width=5,height=4, res=600)
+  ggplot(alirpheno_sampleid_ards, aes(x = studydayanalysis, y = log(procalcitonin), fill = ardsphenotype)) + 
+   geom_boxplot(width = 0.5, outlier.size = 0.2, notch= FALSE, alpha=0.5)  + 
+   geom_point(position = position_jitterdodge(dodge.width = 0.75), size = 0.4) + 
+  labs(y = "log(Concentration)", x = "Followup", title = "Procalcitonin" ) + 
+    theme_pubr() +
+  theme(plot.title = element_text(hjust = 0.5), legend.position = "none", axis.text.x = element_text(colour = "black", size = 12, face = "bold" )) + 
+  scale_fill_manual(values=c("phen1"="#6666FF", "phen2" = "#CC0000")) + 
+  stat_compare_means(aes(group = ardsphenotype), label = "p.signif", method = "t.test", color =  c("red"), face = "bold",label.x = c(1.5), size = 8) + 
+  ylim(3.5, 9.4) +
+  stat_summary(fun.y= median, geom="line", aes(group=ardsphenotype), position = position_dodge(0.8), color = c("#8A8A8A"), linetype = 2) 
+  dev.off()
+  
+  # procalcitonin repeatedmeasures separately for ardsphenotype 1 and 2
+model=lme(procalcitonin~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_ards_ardsphenotype1, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(procalcitonin~studydayanalysis, data = alirpheno_sampleid_ards_ardsphenotype1)
+summary(fit)
+model=lme(procalcitonin~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_ards_ardsphenotype2, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(procalcitonin~studydayanalysis, data = alirpheno_sampleid_ards_ardsphenotype2)
+summary(fit)
+   
+   
+   
+     # fractalkine
+  jpeg('fractalkine_ards_ardsphenotype.jpeg', units="in", width=5,height=4, res=600)
+  ggplot(alirpheno_sampleid_ards, aes(x = studydayanalysis, y = log(fractalkine), fill = ardsphenotype)) + 
+   geom_boxplot(width = 0.5, outlier.size = 0.2, notch= FALSE, alpha=0.5)  + 
+  geom_point(position = position_jitterdodge(), size = 0.5) + 
+  labs(y = "log(Concentration)", x = "Followup", title = "Fractalkine" ) + 
+    theme_pubr() +
+  theme(plot.title = element_text(hjust = 0.5), legend.position = "none", axis.text.x = element_text(colour = "black", size = 12, face = "bold" )) + 
+  scale_fill_manual(values=c("phen1"="#6666FF", "phen2" = "#CC0000")) + 
+  stat_compare_means(aes(group = ardsphenotype), label = "p.signif", method = "t.test", color =  c("red"), face = "bold",label.x = c(1.5), size = 8) + 
+  ylim(5, 9) +
+  stat_summary(fun.y= median, geom="line", aes(group=ardsphenotype), position = position_dodge(0.8), color = c("#8A8A8A"), linetype = 2) 
+  dev.off()
+
+     # fractalkine repeatedmeasures separately for ardsphenotype 1 and 2
+model=lme(fractalkine~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_ards_ardsphenotype1, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(fractalkine~studydayanalysis, data = alirpheno_sampleid_ards_ardsphenotype1)
+summary(fit)
+model=lme(fractalkine~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_ards_ardsphenotype2, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(fractalkine~studydayanalysis, data = alirpheno_sampleid_ards_ardsphenotype2)
+summary(fit)
+   
+   # St2
+  jpeg('st2_ards_ardsphenotype.jpeg', units="in", width=5,height=4, res=600)
+  ggplot(alirpheno_sampleid_ards, aes(x = studydayanalysis, y = log(st2), fill = ardsphenotype)) + 
+   geom_boxplot(width = 0.5, outlier.size = 0.2, notch= FALSE, alpha=0.5)  + 
+   geom_point(position = position_jitterdodge(dodge.width = 0.75), size = 0.4) + 
+  labs(y = "log(Concentration)", x = "Followup", title = "ST2" ) + 
+    theme_pubr() +
+  theme(plot.title = element_text(hjust = 0.5), legend.position = "none", axis.text.x = element_text(colour = "black", size = 12, face = "bold" )) + 
+  scale_fill_manual(values=c("phen1"="#6666FF", "phen2" = "#CC0000")) + 
+  stat_compare_means(aes(group = ardsphenotype), label = "p.signif", method = "t.test", color =  c("red"), face = "bold",label.x = c(1.5), size = 8) +
+  stat_summary(fun.y= median, geom="line", aes(group=ardsphenotype), position = position_dodge(0.8), color = c("#8A8A8A"), linetype = 2) +
+    ylim(9,15)
+  dev.off()
+
+       # st2 repeatedmeasures separately for ardsphenotype 1 and 2
+model=lme(st2~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_ards_ardsphenotype1, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(st2~studydayanalysis, data = alirpheno_sampleid_ards_ardsphenotype1)
+summary(fit)
+model=lme(st2~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_ards_ardsphenotype2, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(st2~studydayanalysis, data = alirpheno_sampleid_ards_ardsphenotype2)
+summary(fit)
+      
+    # pentraxin3
+jpeg('pentraxin3_ards_ardsphenotype.jpeg', units="in", width=5,height=4, res=600)
+  ggplot(alirpheno_sampleid_ards, aes(x = studydayanalysis, y = log(pentraxin3), fill = ardsphenotype)) + 
+      geom_boxplot(width = 0.5, outlier.size = 0.2, notch= FALSE, alpha=0.5)  + 
+   geom_point(position = position_jitterdodge(dodge.width = 0.75), size = 0.4) + 
+  labs(y = "log(Concentration)", x = "Followup", title = "Pentraxin 3" ) + 
+    theme_pubr() +
+  theme(plot.title = element_text(hjust = 0.5), legend.position = "none", axis.text.x = element_text(colour = "black", size = 12, face = "bold" )) + 
+  scale_fill_manual(values=c("phen1"="#6666FF", "phen2" = "#CC0000")) + 
+  stat_compare_means(aes(group = ardsphenotype), label = "p.signif", method = "t.test", color =  c("red"), face = "bold",label.x = c(1.5), size = 8) +
+  stat_summary(fun.y= median, geom="line", aes(group=ardsphenotype), position = position_dodge(0.8), color = c("#8A8A8A"), linetype = 2) +
+    ylim(5,11)
+  dev.off()
+
+       # pentraxin3 repeatedmeasures separately for ardsphenotype 1 and 2
+model=lme(pentraxin3~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_ards_ardsphenotype1, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(pentraxin3~studydayanalysis, data = alirpheno_sampleid_ards_ardsphenotype1)
+summary(fit)
+model=lme(pentraxin3~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_ards_ardsphenotype2, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(pentraxin3~studydayanalysis, data = alirpheno_sampleid_ards_ardsphenotype2)
+summary(fit)
+   
+   #il10
+      jpeg('il10_ards_ardsphenotype.jpeg', units="in", width=5,height=4, res=600)
+  ggplot(alirpheno_sampleid_ards, aes(x = studydayanalysis, y = log(il10), fill = ardsphenotype)) + 
+    geom_boxplot(width = 0.5, outlier.size = 0.2, notch= FALSE, alpha=0.5)  + 
+   geom_point(position = position_jitterdodge(dodge.width = 0.75), size = 0.4) + 
+  labs(y = "log(Concentration)", x = "Followup", title = "IL10" ) + 
+    theme_pubr() +
+  theme(plot.title = element_text(hjust = 0.5), legend.position = "none", axis.text.x = element_text(colour = "black", size = 12, face = "bold" )) + 
+  scale_fill_manual(values=c("phen1"="#6666FF", "phen2" = "#CC0000")) + 
+  stat_compare_means(aes(group = ardsphenotype), label = "p.signif", method = "t.test", color =  c("red"), face = "bold",label.x = c(1.5), size = 8) +
+  stat_summary(fun.y= median, geom="line", aes(group=ardsphenotype), position = position_dodge(0.8), color = c("#8A8A8A"), linetype = 2) +
+  ylim(0, 5)
+  dev.off()
+  
+         # il10 repeatedmeasures separately for ardsphenotype 1 and 2
+model=lme(il10~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_ards_ardsphenotype1, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(il10~studydayanalysis, data = alirpheno_sampleid_ards_ardsphenotype1)
+summary(fit)
+model=lme(il10~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_ards_ardsphenotype2, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(il10~studydayanalysis, data = alirpheno_sampleid_ards_ardsphenotype2)
+summary(fit)
+   
+  
+  # IL8
+jpeg('il8_ards_ardsphenotype.jpeg', units="in", width=5,height=4, res=600)
+    ggplot(alirpheno_sampleid_ards, aes(x = studydayanalysis, y = log(il8), fill = ardsphenotype)) + 
+    geom_boxplot(width = 0.5, outlier.size = 0.2, notch= FALSE, alpha=0.5)  + 
+   geom_point(position = position_jitterdodge(dodge.width = 0.75), size = 0.4) + 
+  labs(y = "log(Concentration)", x = "Followup", title = "IL8" ) + 
+    theme_pubr() +
+  theme(plot.title = element_text(hjust = 0.5), legend.position = "none", axis.text.x = element_text(colour = "black", size = 12, face = "bold" )) + 
+  scale_fill_manual(values=c("phen1"="#6666FF", "phen2" = "#CC0000")) + 
+  stat_compare_means(aes(group = ardsphenotype), label = "p.signif", method = "t.test", color =  c("red"), face = "bold",label.x = c(1.5), size = 8) +
+  stat_summary(fun.y= median, geom="line", aes(group=ardsphenotype), position = position_dodge(0.8), color = c("#8A8A8A"), linetype = 2) 
+    dev.off()
+  
+           # il8 repeatedmeasures separately for ardsphenotype 1 and 2
+model=lme(il8~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_ards_ardsphenotype1, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(il8~studydayanalysis, data = alirpheno_sampleid_ards_ardsphenotype1)
+summary(fit)
+model=lme(il8~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_ards_ardsphenotype2, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(il8~studydayanalysis, data = alirpheno_sampleid_ards_ardsphenotype2)
+summary(fit)
+   
+    
+      # TNFR1
+jpeg('tnfr1_ards_ardsphenotype.jpeg', units="in", width=5,height=4, res=600)
+    ggplot(alirpheno_sampleid_ards, aes(x = studydayanalysis, y = log(tnfr1), fill = ardsphenotype)) + 
+    geom_boxplot(width = 0.5, outlier.size = 0.2, notch= FALSE, alpha=0.5)  + 
+   geom_point(position = position_jitterdodge(dodge.width = 0.75), size = 0.4) + 
+  labs(y = "log(Concentration)", x = "Followup", title = "TNFR1" ) + 
+    theme_pubr() +
+  theme(plot.title = element_text(hjust = 0.5), legend.position = "none", axis.text.x = element_text(colour = "black", size = 12, face = "bold" )) + 
+  scale_fill_manual(values=c("phen1"="#6666FF", "phen2" = "#CC0000")) + 
+  stat_compare_means(aes(group = ardsphenotype), label = "p.signif", method = "t.test", color =  c("red"), face = "bold",label.x = c(1.5), size = 8) +
+  stat_summary(fun.y= median, geom="line", aes(group=ardsphenotype), position = position_dodge(0.8), color = c("#8A8A8A"), linetype = 2) 
+    dev.off()
+    
+              # tnfr1 repeatedmeasures separately for ardsphenotype 1 and 2
+model=lme(tnfr1~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_ards_ardsphenotype1, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(tnfr1~studydayanalysis, data = alirpheno_sampleid_ards_ardsphenotype1)
+summary(fit)
+model=lme(tnfr1~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_ards_ardsphenotype2, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(tnfr1~studydayanalysis, data = alirpheno_sampleid_ards_ardsphenotype2)
+summary(fit)
+  
+    
+    
+    ########## ARFA ####################
+  # ANg2
+jpeg('ang2_arfa_ardsphenotype.jpeg', units="in", width=5,height=4, res=600)
+  ggplot(alirpheno_sampleid_arfa, aes(x = studydayanalysis, y = log(ang2), fill =ardsphenotype)) + 
+   geom_boxplot(width = 0.5, outlier.size = 0.2, notch= FALSE, alpha=0.5)  + 
+   geom_point(position = position_jitterdodge(dodge.width = 0.75), size = 0.4, shape =1) + 
+    labs(y = "log(Concentration)", x = "Followup", title = "Angiopoietin-2" ) + 
+    theme_pubr() +
+  theme(plot.title = element_text(hjust = 0.5), legend.position = "none", axis.text.x = element_text(colour = "black", size = 12, face = "bold" )) + 
+  scale_fill_manual(values=c("phen1"="#6666FF", "phen2" = "#CC0000")) + 
+  stat_compare_means(aes(group = ardsphenotype), label = "p.signif", method = "wilcox.test", color =  c("red"), face = "bold",label.x = c(1.5), size = 8) +
+  ylim(7, 11.5) +
+  stat_summary(fun.y= median, geom="line", aes(group=ardsphenotype), position = position_dodge(0.8), color = c("#8A8A8A"), linetype = 2) 
+  dev.off()
+
+# ang2repeatedmeasures separately for ardsphenotype 1 and 2
+alirpheno_sampleid_arfa_ardsphenotype1 <- filter(alirpheno_sampleid_arfa, ardsphenotype=="phen1")
+model=lme(ang2~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_arfa_ardsphenotype1, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(ang2~studydayanalysis, data = alirpheno_sampleid_arfa_ardsphenotype1)
+summary(fit)
+alirpheno_sampleid_arfa_ardsphenotype2 <- filter(alirpheno_sampleid_arfa, ardsphenotype=="phen2")
+model=lme(ang2~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_arfa_ardsphenotype2, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(ang2~studydayanalysis, data = alirpheno_sampleid_arfa_ardsphenotype2)
+summary(fit)
+  
+  # RAGE
+jpeg('rage_arfa_ardsphenotype.jpeg', units="in", width=5,height=4, res=600)
+    ggplot(alirpheno_sampleid_arfa, aes(x = studydayanalysis, y = log(rage), fill = ardsphenotype)) + 
+   geom_boxplot(width = 0.5, outlier.size = 0.2, notch= FALSE, alpha=0.5)  + 
+   geom_point(position = position_jitterdodge(dodge.width = 0.75), size = 0.4) + 
+  labs(y = "log(Concentration)", x = "Followup", title = "RAGE" ) + 
+    theme_pubr() +
+  theme(plot.title = element_text(hjust = 0.5), legend.position = "none", axis.text.x = element_text(colour = "black", size = 12, face = "bold" )) + 
+  scale_fill_manual(values=c("phen1"="#6666FF", "phen2" = "#CC0000")) + 
+  stat_compare_means(aes(group = ardsphenotype), label = "p.signif", method = "t.test", color =  c("red"), face = "bold",label.x = c(1.5), size = 8) + 
+  ylim(7, 10.4) +
+  stat_summary(fun.y= median, geom="line", aes(group=ardsphenotype), position = position_dodge(0.8), color = c("#8A8A8A"), linetype = 2) 
+    dev.off()
+ 
+    # ragerepeatedmeasures separately for ardsphenotype 1 and 2
+model=lme(rage~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_arfa_ardsphenotype1, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(rage~studydayanalysis, data = alirpheno_sampleid_arfa_ardsphenotype1)
+summary(fit)
+model=lme(rage~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_arfa_ardsphenotype2, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(rage~studydayanalysis, data = alirpheno_sampleid_arfa_ardsphenotype2)
+summary(fit)
+   
+  # inflammation - IL-6
+jpeg('il6_arfa_ardsphenotype.jpeg', units="in", width=5,height=4, res=600)
+  ggplot(alirpheno_sampleid_arfa, aes(x = studydayanalysis, y = log(il6), fill = ardsphenotype)) + 
+   geom_boxplot(width = 0.5, outlier.size = 0.2, notch= FALSE, alpha=0.5)  + 
+   geom_point(position = position_jitterdodge(dodge.width = 0.75), size = 0.4) + 
+  labs(y = "log(Concentration)", x = "Followup", title = "IL-6" ) + 
+    theme_pubr() +
+  theme(plot.title = element_text(hjust = 0.5), legend.position = "none", axis.text.x = element_text(colour = "black", size = 12, face = "bold" )) + 
+  scale_fill_manual(values=c("phen1"="#6666FF", "phen2" = "#CC0000")) + 
+  stat_compare_means(aes(group = ardsphenotype), label = "p.signif", method = "t.test", color =  c("red"), face = "bold",label.x = c(1.5), size = 8) + 
+  ylim(0, 9) +
+  stat_summary(fun.y= median, geom="line", aes(group=ardsphenotype), position = position_dodge(0.8), color = c("#8A8A8A"), linetype = 2) 
+  dev.off()
+      # il-6- repeatedmeasures separately for ardsphenotype 1 and 2
+model=lme(il6~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_arfa_ardsphenotype1, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(il6~studydayanalysis, data = alirpheno_sampleid_arfa_ardsphenotype1)
+summary(fit)
+model=lme(il6~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_arfa_ardsphenotype2, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(il6~studydayanalysis, data = alirpheno_sampleid_arfa_ardsphenotype2)
+summary(fit)
+
+   # bacterial infection - procalcitonin
+   jpeg('procalcitonin_arfa_ardsphenotype.jpeg', units="in", width=5,height=4, res=600)
+  ggplot(alirpheno_sampleid_arfa, aes(x = studydayanalysis, y = log(procalcitonin), fill = ardsphenotype)) + 
+   geom_boxplot(width = 0.5, outlier.size = 0.2, notch= FALSE, alpha=0.5)  + 
+   geom_point(position = position_jitterdodge(dodge.width = 0.75), size = 0.4) + 
+  labs(y = "log(Concentration)", x = "Followup", title = "Procalcitonin" ) + 
+    theme_pubr() +
+  theme(plot.title = element_text(hjust = 0.5), legend.position = "none", axis.text.x = element_text(colour = "black", size = 12, face = "bold" )) + 
+  scale_fill_manual(values=c("phen1"="#6666FF", "phen2" = "#CC0000")) + 
+  stat_compare_means(aes(group = ardsphenotype), label = "p.signif", method = "t.test", color =  c("red"), face = "bold",label.x = c(1.5), size = 8) + 
+  ylim(3.5, 9.4) +
+  stat_summary(fun.y= median, geom="line", aes(group=ardsphenotype), position = position_dodge(0.8), color = c("#8A8A8A"), linetype = 2) 
+  dev.off()
+  
+  # procalcitonin repeatedmeasures separately for ardsphenotype 1 and 2
+model=lme(procalcitonin~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_arfa_ardsphenotype1, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(procalcitonin~studydayanalysis, data = alirpheno_sampleid_arfa_ardsphenotype1)
+summary(fit)
+model=lme(procalcitonin~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_arfa_ardsphenotype2, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(procalcitonin~studydayanalysis, data = alirpheno_sampleid_arfa_ardsphenotype2)
+summary(fit)
+   
+   
+   
+     # fractalkine
+  jpeg('fractalkine_arfa_ardsphenotype.jpeg', units="in", width=5,height=4, res=600)
+  ggplot(alirpheno_sampleid_arfa, aes(x = studydayanalysis, y = log(fractalkine), fill = ardsphenotype)) + 
+   geom_boxplot(width = 0.5, outlier.size = 0.2, notch= FALSE, alpha=0.5)  + 
+  geom_point(position = position_jitterdodge(), size = 0.5) + 
+  labs(y = "log(Concentration)", x = "Followup", title = "Fractalkine" ) + 
+    theme_pubr() +
+  theme(plot.title = element_text(hjust = 0.5), legend.position = "none", axis.text.x = element_text(colour = "black", size = 12, face = "bold" )) + 
+  scale_fill_manual(values=c("phen1"="#6666FF", "phen2" = "#CC0000")) + 
+  stat_compare_means(aes(group = ardsphenotype), label = "p.signif", method = "t.test", color =  c("red"), face = "bold",label.x = c(1.5), size = 8) + 
+  ylim(5, 9) +
+  stat_summary(fun.y= median, geom="line", aes(group=ardsphenotype), position = position_dodge(0.8), color = c("#8A8A8A"), linetype = 2) 
+  dev.off()
+
+     # fractalkine repeatedmeasures separately for ardsphenotype 1 and 2
+model=lme(fractalkine~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_arfa_ardsphenotype1, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(fractalkine~studydayanalysis, data = alirpheno_sampleid_arfa_ardsphenotype1)
+summary(fit)
+model=lme(fractalkine~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_arfa_ardsphenotype2, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(fractalkine~studydayanalysis, data = alirpheno_sampleid_arfa_ardsphenotype2)
+summary(fit)
+   
+   # St2
+  jpeg('st2_arfa_ardsphenotype.jpeg', units="in", width=5,height=4, res=600)
+  ggplot(alirpheno_sampleid_arfa, aes(x = studydayanalysis, y = log(st2), fill = ardsphenotype)) + 
+   geom_boxplot(width = 0.5, outlier.size = 0.2, notch= FALSE, alpha=0.5)  + 
+   geom_point(position = position_jitterdodge(dodge.width = 0.75), size = 0.4) + 
+  labs(y = "log(Concentration)", x = "Followup", title = "ST2" ) + 
+    theme_pubr() +
+  theme(plot.title = element_text(hjust = 0.5), legend.position = "none", axis.text.x = element_text(colour = "black", size = 12, face = "bold" )) + 
+  scale_fill_manual(values=c("phen1"="#6666FF", "phen2" = "#CC0000")) + 
+  stat_compare_means(aes(group = ardsphenotype), label = "p.signif", method = "t.test", color =  c("red"), face = "bold",label.x = c(1.5), size = 8) +
+  stat_summary(fun.y= median, geom="line", aes(group=ardsphenotype), position = position_dodge(0.8), color = c("#8A8A8A"), linetype = 2) +
+    ylim(9,15)
+  dev.off()
+
+       # st2 repeatedmeasures separately for ardsphenotype 1 and 2
+model=lme(st2~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_arfa_ardsphenotype1, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(st2~studydayanalysis, data = alirpheno_sampleid_arfa_ardsphenotype1)
+summary(fit)
+model=lme(st2~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_arfa_ardsphenotype2, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(st2~studydayanalysis, data = alirpheno_sampleid_arfa_ardsphenotype2)
+summary(fit)
+      
+    # pentraxin3
+jpeg('pentraxin3_arfa_ardsphenotype.jpeg', units="in", width=5,height=4, res=600)
+  ggplot(alirpheno_sampleid_arfa, aes(x = studydayanalysis, y = log(pentraxin3), fill = ardsphenotype)) + 
+      geom_boxplot(width = 0.5, outlier.size = 0.2, notch= FALSE, alpha=0.5)  + 
+   geom_point(position = position_jitterdodge(dodge.width = 0.75), size = 0.4) + 
+  labs(y = "log(Concentration)", x = "Followup", title = "Pentraxin 3" ) + 
+    theme_pubr() +
+  theme(plot.title = element_text(hjust = 0.5), legend.position = "none", axis.text.x = element_text(colour = "black", size = 12, face = "bold" )) + 
+  scale_fill_manual(values=c("phen1"="#6666FF", "phen2" = "#CC0000")) + 
+  stat_compare_means(aes(group = ardsphenotype), label = "p.signif", method = "t.test", color =  c("red"), face = "bold",label.x = c(1.5), size = 8) +
+  stat_summary(fun.y= median, geom="line", aes(group=ardsphenotype), position = position_dodge(0.8), color = c("#8A8A8A"), linetype = 2) +
+    ylim(5,11)
+  dev.off()
+
+       # pentraxin3 repeatedmeasures separately for ardsphenotype 1 and 2
+model=lme(pentraxin3~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_arfa_ardsphenotype1, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(pentraxin3~studydayanalysis, data = alirpheno_sampleid_arfa_ardsphenotype1)
+summary(fit)
+model=lme(pentraxin3~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_arfa_ardsphenotype2, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(pentraxin3~studydayanalysis, data = alirpheno_sampleid_arfa_ardsphenotype2)
+summary(fit)
+   
+   #il10
+      jpeg('il10_arfa_ardsphenotype.jpeg', units="in", width=5,height=4, res=600)
+  ggplot(alirpheno_sampleid_arfa, aes(x = studydayanalysis, y = log(il10), fill = ardsphenotype)) + 
+    geom_boxplot(width = 0.5, outlier.size = 0.2, notch= FALSE, alpha=0.5)  + 
+   geom_point(position = position_jitterdodge(dodge.width = 0.75), size = 0.4) + 
+  labs(y = "log(Concentration)", x = "Followup", title = "IL10" ) + 
+    theme_pubr() +
+  theme(plot.title = element_text(hjust = 0.5), legend.position = "none", axis.text.x = element_text(colour = "black", size = 12, face = "bold" )) + 
+  scale_fill_manual(values=c("phen1"="#6666FF", "phen2" = "#CC0000")) + 
+  stat_compare_means(aes(group = ardsphenotype), label = "p.signif", method = "t.test", color =  c("red"), face = "bold",label.x = c(1.5), size = 8) +
+  stat_summary(fun.y= median, geom="line", aes(group=ardsphenotype), position = position_dodge(0.8), color = c("#8A8A8A"), linetype = 2) +
+  ylim(0, 5)
+  dev.off()
+  
+         # il10 repeatedmeasures separately for ardsphenotype 1 and 2
+model=lme(il10~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_arfa_ardsphenotype1, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(il10~studydayanalysis, data = alirpheno_sampleid_arfa_ardsphenotype1)
+summary(fit)
+model=lme(il10~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_arfa_ardsphenotype2, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(il10~studydayanalysis, data = alirpheno_sampleid_arfa_ardsphenotype2)
+summary(fit)
+   
+  
+  # IL8
+jpeg('il8_arfa_ardsphenotype.jpeg', units="in", width=5,height=4, res=600)
+    ggplot(alirpheno_sampleid_arfa, aes(x = studydayanalysis, y = log(il8), fill = ardsphenotype)) + 
+    geom_boxplot(width = 0.5, outlier.size = 0.2, notch= FALSE, alpha=0.5)  + 
+   geom_point(position = position_jitterdodge(dodge.width = 0.75), size = 0.4) + 
+  labs(y = "log(Concentration)", x = "Followup", title = "IL8" ) + 
+    theme_pubr() +
+  theme(plot.title = element_text(hjust = 0.5), legend.position = "none", axis.text.x = element_text(colour = "black", size = 12, face = "bold" )) + 
+  scale_fill_manual(values=c("phen1"="#6666FF", "phen2" = "#CC0000")) + 
+  stat_compare_means(aes(group = ardsphenotype), label = "p.signif", method = "t.test", color =  c("red"), face = "bold",label.x = c(1.5), size = 8) +
+  stat_summary(fun.y= median, geom="line", aes(group=ardsphenotype), position = position_dodge(0.8), color = c("#8A8A8A"), linetype = 2) 
+    dev.off()
+  
+           # il8 repeatedmeasures separately for ardsphenotype 1 and 2
+model=lme(il8~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_arfa_ardsphenotype1, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(il8~studydayanalysis, data = alirpheno_sampleid_arfa_ardsphenotype1)
+summary(fit)
+model=lme(il8~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_arfa_ardsphenotype2, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(il8~studydayanalysis, data = alirpheno_sampleid_arfa_ardsphenotype2)
+summary(fit)
+   
+    
+      # TNFR1
+jpeg('tnfr1_arfa_ardsphenotype.jpeg', units="in", width=5,height=4, res=600)
+    ggplot(alirpheno_sampleid_arfa, aes(x = studydayanalysis, y = log(tnfr1), fill = ardsphenotype)) + 
+    geom_boxplot(width = 0.5, outlier.size = 0.2, notch= FALSE, alpha=0.5)  + 
+   geom_point(position = position_jitterdodge(dodge.width = 0.75), size = 0.4) + 
+  labs(y = "log(Concentration)", x = "Followup", title = "TNFR1" ) + 
+    theme_pubr() +
+  theme(plot.title = element_text(hjust = 0.5), legend.position = "none", axis.text.x = element_text(colour = "black", size = 12, face = "bold" )) + 
+  scale_fill_manual(values=c("phen1"="#6666FF", "phen2" = "#CC0000")) + 
+  stat_compare_means(aes(group = ardsphenotype), label = "p.signif", method = "t.test", color =  c("red"), face = "bold",label.x = c(1.5), size = 8) +
+  stat_summary(fun.y= median, geom="line", aes(group=ardsphenotype), position = position_dodge(0.8), color = c("#8A8A8A"), linetype = 2) 
+    dev.off()
+    
+              # tnfr1 repeatedmeasures separately for ardsphenotype 1 and 2
+model=lme(tnfr1~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_arfa_ardsphenotype1, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(tnfr1~studydayanalysis, data = alirpheno_sampleid_arfa_ardsphenotype1)
+summary(fit)
+model=lme(tnfr1~studydayanalysis, random=~1|SubjectID, data = alirpheno_sampleid_arfa_ardsphenotype2, method = "REML", na.action = na.omit)
+anova(model)
+fit <- aov(tnfr1~studydayanalysis, data = alirpheno_sampleid_arfa_ardsphenotype2)
+summary(fit)
+  
+    
+
+```
